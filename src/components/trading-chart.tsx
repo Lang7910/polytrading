@@ -9,6 +9,7 @@ import {
   LineSeries,
   createChart,
   createSeriesMarkers,
+  type CandlestickData,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
@@ -25,6 +26,12 @@ interface TradingChartProps {
   targets: PriceTargetPrediction[];
   directional: DirectionalPrediction | null;
   indicators: ChartIndicators;
+}
+
+function formatDirectionalMarker(label: string, value: number, directional: DirectionalPrediction) {
+  const buyPrice = label === "涨" ? directional.buyYes : directional.buyNo;
+  const probability = `${Math.round(value * 100)}%`;
+  return buyPrice === undefined ? `${label} ${probability}` : `${label} ${probability} 买${Math.round(buyPrice * 100)}¢`;
 }
 
 export function TradingChart({ candles, targets, directional, indicators }: TradingChartProps) {
@@ -46,7 +53,7 @@ export function TradingChart({ candles, targets, directional, indicators }: Trad
   const lastCandleRef = useRef<Time | null>(null);
   const candleCountRef = useRef<number>(0);
 
-  const candleData = useMemo(
+  const candleData = useMemo<CandlestickData<UTCTimestamp>[]>(
     () =>
       candles.map((item) => ({
         time: item.time as UTCTimestamp,
@@ -306,7 +313,7 @@ export function TradingChart({ candles, targets, directional, indicators }: Trad
         lineWidth: 2,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: `[${target.source === "real" ? "R" : "M"}|${target.matchQuality}] ${target.timeLabel} ${Math.round(target.price).toLocaleString()} 🎯 ${Math.round(target.yesProbability * 100)}%`,
+        title: `${target.timeLabel} ${Math.round(target.price).toLocaleString()} ${Math.round(target.yesProbability * 100)}%`,
       });
       priceLinesRef.current.push(line);
     }
@@ -316,29 +323,26 @@ export function TradingChart({ candles, targets, directional, indicators }: Trad
     if (!seriesRef.current || candleData.length === 0) return;
     const latest = candleData[candleData.length - 1];
 
-    if (!directional) {
-      if (markerApiRef.current) {
-        markerApiRef.current.setMarkers([]);
-      }
-      return;
-    }
+    const markers: SeriesMarker<Time>[] = [];
 
-    const markers: SeriesMarker<Time>[] = [
-      {
-        time: latest.time,
-        position: "aboveBar",
-        color: directional.status === "resolving" ? "#71717a" : "#3b82f6",
-        shape: "arrowUp",
-        text: `涨 ${Math.round(directional.yes * 100)}%`,
-      },
-      {
-        time: latest.time,
-        position: "belowBar",
-        color: directional.status === "resolving" ? "#52525b" : "#ef4444",
-        shape: "arrowDown",
-        text: `跌 ${Math.round(directional.no * 100)}%`,
-      },
-    ];
+    if (directional) {
+      markers.push(
+        {
+          time: latest.time,
+          position: "aboveBar",
+          color: directional.status === "resolving" ? "#71717a" : "#3b82f6",
+          shape: "arrowUp",
+          text: formatDirectionalMarker("涨", directional.yes, directional),
+        },
+        {
+          time: latest.time,
+          position: "belowBar",
+          color: directional.status === "resolving" ? "#52525b" : "#ef4444",
+          shape: "arrowDown",
+          text: formatDirectionalMarker("跌", directional.no, directional),
+        },
+      );
+    }
 
     if (!markerApiRef.current) {
       markerApiRef.current = createSeriesMarkers(seriesRef.current, markers);

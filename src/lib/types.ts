@@ -1,4 +1,4 @@
-export type Asset = "BTC" | "ETH";
+export type Asset = "BTC" | "ETH" | "SOL" | "XRP" | "DOGE" | "BNB";
 
 export type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 
@@ -19,21 +19,36 @@ export interface PriceTargetPrediction {
   price: number;
   yesProbability: number;
   timeframe: Timeframe;
-  source: "real" | "mock";
+  source: "real";
   marketId: string;
   conditionId: string;
   question: string;
-  matchQuality: "strict" | "heuristic" | "mock";
+  matchQuality: "strict" | "heuristic";
+  priceTargetType?: "above-below" | "range" | "hit" | "generic";
+}
+
+export interface OutcomeQuote {
+  bid?: number;
+  ask?: number;
+  mid?: number;
+  price?: number;
+  updatedAt?: number;
 }
 
 export interface DirectionalPrediction {
   timeframe: Exclude<Timeframe, "1m">;
   yes: number;
   no: number;
+  buyYes?: number;
+  buyNo?: number;
+  yesQuote?: OutcomeQuote;
+  noQuote?: OutcomeQuote;
+  quoteMode?: "gamma" | "clob";
   marketId?: string;
   conditionId?: string;
+  startDate?: string;
   endDate?: string;
-  source?: "real" | "mock";
+  source?: "real";
   status?: "active" | "resolving" | "closed";
 }
 
@@ -43,7 +58,7 @@ export interface PolymarketDiagnostics {
   fetchedAt: number | null;
   rawCount: number;
   parsedCount: number;
-  sourceMode: "real" | "mock";
+  sourceMode: "real";
 }
 
 export type MAType = "sma" | "ema" | "wma" | "hma";
@@ -87,17 +102,23 @@ export interface PolymarketContract {
     yes: number;
     no: number;
   };
+  quotes?: {
+    yes?: OutcomeQuote;
+    no?: OutcomeQuote;
+  };
+  quoteMode?: "gamma" | "clob";
   clobTokenIds?: string[];
   yesTokenId?: string;
   noTokenId?: string;
   status: "active" | "resolving" | "closed";
   marketType: "directional" | "price-target";
+  priceTargetType?: "above-below" | "range" | "hit" | "generic";
   priceTargets?: number[];
   priceTargetLevels?: Array<{
     label: string;
     price: number;
     yesProbability: number;
   }>;
-  source: "real" | "mock";
-  matchQuality: "strict" | "heuristic" | "mock";
+  source: "real";
+  matchQuality: "strict" | "heuristic";
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { CandlestickChart, Search, SlidersHorizontal } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { MarketCard } from "@/components/market-card";
 import { TradingChart } from "@/components/trading-chart";
@@ -9,8 +9,30 @@ import { useBinanceKline } from "@/hooks/use-binance-kline";
 import { useContinuousMarket } from "@/hooks/use-continuous-market";
 import { usePolymarketDashboard } from "@/hooks/use-polymarket-dashboard";
 import { ASSETS, TIMEFRAMES } from "@/lib/constants";
-import { asDirectionalPredictions, asPriceTargetPredictions } from "@/lib/mock-polymarket";
-import type { Asset, ChartIndicators, DirectionalPrediction, Timeframe } from "@/lib/types";
+import { asDirectionalPredictions, asPriceTargetPredictions } from "@/lib/polymarket";
+import type { Asset, ChartIndicators, DirectionalPrediction, PolymarketContract, Timeframe } from "@/lib/types";
+
+function toDirectionalPrediction(
+  market: PolymarketContract,
+  timeframe: DirectionalPrediction["timeframe"],
+): DirectionalPrediction {
+  return {
+    timeframe,
+    yes: market.probabilities.yes,
+    no: market.probabilities.no,
+    buyYes: market.quotes?.yes?.ask,
+    buyNo: market.quotes?.no?.ask,
+    yesQuote: market.quotes?.yes,
+    noQuote: market.quotes?.no,
+    quoteMode: market.quoteMode,
+    marketId: market.id,
+    conditionId: market.conditionId,
+    startDate: market.startDate,
+    endDate: market.endDate,
+    source: market.source,
+    status: market.status,
+  };
+}
 
 export function TradingTerminal() {
   const [asset, setAsset] = useState<Asset>("BTC");
@@ -22,6 +44,12 @@ export function TradingTerminal() {
     rsi: { enabled: false, period: 14 },
     macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
   });
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const { candles, isLoading: isKlineLoading, error, markPrice } = useBinanceKline(asset, timeframe);
   const m5 = useContinuousMarket(asset, "5m");
@@ -29,75 +57,58 @@ export function TradingTerminal() {
   const h1 = useContinuousMarket(asset, "1h");
   const h4 = useContinuousMarket(asset, "4h");
   const d1 = useContinuousMarket(asset, "1d");
-  const { markets, diagnostics } = usePolymarketDashboard(asset, timeframe, markPrice);
+  const { markets: gammaMarkets, allMarkets: allGammaMarkets, diagnostics } = usePolymarketDashboard(asset, timeframe, markPrice);
 
-  const targetPredictions = useMemo(() => asPriceTargetPredictions(markets), [markets]);
+  const markets = useMemo(() => {
+    const byKey = new Map<string, PolymarketContract>();
+    for (const market of gammaMarkets) {
+      byKey.set(market.conditionId || market.id, market);
+    }
+    for (const market of [m5.market, m15.market, h1.market, h4.market, d1.market]) {
+      if (market) {
+        byKey.set(market.conditionId || market.id, market);
+      }
+    }
+    return Array.from(byKey.values());
+  }, [d1.market, gammaMarkets, h1.market, h4.market, m15.market, m5.market]);
+  const targetSourceMarkets = useMemo(() => {
+    const byKey = new Map<string, PolymarketContract>();
+    for (const market of allGammaMarkets) {
+      byKey.set(market.conditionId || market.id, market);
+    }
+    for (const market of markets) {
+      byKey.set(market.conditionId || market.id, market);
+    }
+    return Array.from(byKey.values());
+  }, [allGammaMarkets, markets]);
+  const targetPredictions = useMemo(
+    () => asPriceTargetPredictions(targetSourceMarkets, markPrice, timeframe),
+    [markPrice, targetSourceMarkets, timeframe],
+  );
+  const directionalPredictions = useMemo(
+    () => asDirectionalPredictions(markets.filter((item) => item.source === "real")),
+    [markets],
+  );
   const selectedDirectional = useMemo<DirectionalPrediction | null>(() => {
-    const fromDashboard = asDirectionalPredictions(markets.filter((item) => item.source === "real"));
     const map = new Map<DirectionalPrediction["timeframe"], DirectionalPrediction>();
 
-    for (const item of fromDashboard) {
+    for (const item of directionalPredictions) {
       map.set(item.timeframe, item);
     }
     if (m5.market) {
-      map.set("5m", {
-        timeframe: "5m",
-        yes: m5.market.probabilities.yes,
-        no: m5.market.probabilities.no,
-        marketId: m5.market.id,
-        conditionId: m5.market.conditionId,
-        endDate: m5.market.endDate,
-        source: m5.market.source,
-        status: m5.market.status,
-      });
+      map.set("5m", toDirectionalPrediction(m5.market, "5m"));
     }
     if (m15.market) {
-      map.set("15m", {
-        timeframe: "15m",
-        yes: m15.market.probabilities.yes,
-        no: m15.market.probabilities.no,
-        marketId: m15.market.id,
-        conditionId: m15.market.conditionId,
-        endDate: m15.market.endDate,
-        source: m15.market.source,
-        status: m15.market.status,
-      });
+      map.set("15m", toDirectionalPrediction(m15.market, "15m"));
     }
     if (h1.market) {
-      map.set("1h", {
-        timeframe: "1h",
-        yes: h1.market.probabilities.yes,
-        no: h1.market.probabilities.no,
-        marketId: h1.market.id,
-        conditionId: h1.market.conditionId,
-        endDate: h1.market.endDate,
-        source: h1.market.source,
-        status: h1.market.status,
-      });
+      map.set("1h", toDirectionalPrediction(h1.market, "1h"));
     }
     if (h4.market) {
-      map.set("4h", {
-        timeframe: "4h",
-        yes: h4.market.probabilities.yes,
-        no: h4.market.probabilities.no,
-        marketId: h4.market.id,
-        conditionId: h4.market.conditionId,
-        endDate: h4.market.endDate,
-        source: h4.market.source,
-        status: h4.market.status,
-      });
+      map.set("4h", toDirectionalPrediction(h4.market, "4h"));
     }
     if (d1.market) {
-      map.set("1d", {
-        timeframe: "1d",
-        yes: d1.market.probabilities.yes,
-        no: d1.market.probabilities.no,
-        marketId: d1.market.id,
-        conditionId: d1.market.conditionId,
-        endDate: d1.market.endDate,
-        source: d1.market.source,
-        status: d1.market.status,
-      });
+      map.set("1d", toDirectionalPrediction(d1.market, "1d"));
     }
 
     if (timeframe === "1m") {
@@ -108,7 +119,24 @@ export function TradingTerminal() {
     if (timeframe === "1h") return map.get("1h") ?? null;
     if (timeframe === "4h") return map.get("4h") ?? null;
     return map.get("1d") ?? null;
-  }, [d1.market, h1.market, h4.market, m15.market, m5.market, markets, timeframe]);
+  }, [d1.market, directionalPredictions, h1.market, h4.market, m15.market, m5.market, timeframe]);
+
+  const followupDirectional = useMemo(() => {
+    if (timeframe === "1m") return [];
+    const selectedKey = selectedDirectional?.conditionId ?? selectedDirectional?.marketId;
+    const byKey = new Map<string, DirectionalPrediction>();
+    for (const item of directionalPredictions) {
+      if (item.timeframe !== timeframe || !item.endDate || new Date(item.endDate).getTime() <= nowMs) continue;
+      byKey.set(item.conditionId ?? item.marketId ?? item.endDate, item);
+    }
+    if (selectedDirectional?.endDate) {
+      byKey.set(selectedKey ?? selectedDirectional.endDate, selectedDirectional);
+    }
+    return Array.from(byKey.values())
+      .sort((a, b) => new Date(a.endDate ?? 0).getTime() - new Date(b.endDate ?? 0).getTime())
+      .filter((item) => Math.max(item.yes, item.no) >= 0.55)
+      .slice(0, 4);
+  }, [directionalPredictions, nowMs, selectedDirectional, timeframe]);
 
   const currentDirectionalStatus = useMemo(() => {
     if (timeframe === "1m") {
@@ -260,7 +288,12 @@ export function TradingTerminal() {
           </div>
 
           <div className="relative">
-            <TradingChart candles={candles} targets={targetPredictions} directional={selectedDirectional} indicators={indicators} />
+            <TradingChart
+              candles={candles}
+              targets={targetPredictions}
+              directional={selectedDirectional}
+              indicators={indicators}
+            />
             <div className="pointer-events-none absolute left-4 top-4 w-56 rounded-lg border border-emerald-500/30 bg-black/60 p-3 backdrop-blur">
               <div className="mb-2 text-xs text-zinc-400">短线预测</div>
               <div className="space-y-1 text-sm">
@@ -296,15 +329,15 @@ export function TradingTerminal() {
                 </div>
                 <div className={`pt-1 text-xs ${currentDirectionalStatus.tone}`}>{currentDirectionalStatus.label}</div>
                 <div className="pt-1 text-[10px] text-zinc-500">
-                  5m: {m5.diagnostics.ok ? "REAL" : m5.diagnostics.reason ?? "mock"}
+                  5m: {m5.diagnostics.ok ? "REAL" : m5.diagnostics.reason ?? "waiting_real_data"}
                 </div>
                 <div className="text-[10px] text-zinc-500">
-                  15m: {m15.diagnostics.ok ? "REAL" : m15.diagnostics.reason ?? "mock"} | 1h:{" "}
-                  {h1.diagnostics.ok ? "REAL" : h1.diagnostics.reason ?? "mock"}
+                  15m: {m15.diagnostics.ok ? "REAL" : m15.diagnostics.reason ?? "waiting_real_data"} | 1h:{" "}
+                  {h1.diagnostics.ok ? "REAL" : h1.diagnostics.reason ?? "waiting_real_data"}
                 </div>
                 <div className="text-[10px] text-zinc-500">
-                  4h: {h4.diagnostics.ok ? "REAL" : h4.diagnostics.reason ?? "mock"} | 1d:{" "}
-                  {d1.diagnostics.ok ? "REAL" : d1.diagnostics.reason ?? "mock"}
+                  4h: {h4.diagnostics.ok ? "REAL" : h4.diagnostics.reason ?? "waiting_real_data"} | 1d:{" "}
+                  {d1.diagnostics.ok ? "REAL" : d1.diagnostics.reason ?? "waiting_real_data"}
                 </div>
                 {([m5.market, m15.market, h1.market, h4.market, d1.market].some(
                   (item) => item?.status === "resolving",
@@ -341,6 +374,29 @@ export function TradingTerminal() {
           {error && <div className="mb-3 rounded border border-red-900/50 bg-red-950/20 p-3 text-sm text-red-300">{error}</div>}
 
           <div className="h-[calc(100%-80px)] space-y-3 overflow-y-auto pr-1">
+            {followupDirectional.length > 0 && (
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <div className="mb-2 text-xs font-medium text-zinc-300">后续时段</div>
+                <div className="grid gap-2">
+                  {followupDirectional.map((item) => {
+                    const isUp = item.yes >= item.no;
+                    return (
+                      <div
+                        key={item.conditionId ?? item.marketId ?? item.endDate}
+                        className="flex items-center justify-between rounded-md bg-zinc-900/80 px-2 py-1.5 text-xs"
+                      >
+                        <span className="text-zinc-400">
+                          {item.endDate ? new Date(item.endDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "后续"}
+                        </span>
+                        <span className={isUp ? "text-emerald-300" : "text-red-300"}>
+                          {isUp ? "涨" : "跌"} {Math.round(Math.max(item.yes, item.no) * 100)}%
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {markets.map((market) => (
               <MarketCard key={market.id} market={market} />
             ))}

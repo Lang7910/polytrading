@@ -1,4 +1,11 @@
-import type { Asset, PolymarketContract, PolymarketDiagnostics } from "@/lib/types";
+import type {
+  Asset,
+  DirectionalPrediction,
+  PolymarketContract,
+  PolymarketDiagnostics,
+  PriceTargetPrediction,
+} from "@/lib/types";
+import { ASSETS } from "@/lib/constants";
 import { clamp } from "@/lib/utils";
 
 type ContinuousTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
@@ -25,6 +32,7 @@ interface GammaMarketResponse {
   tagLabels?: string[];
   tagSlugs?: string[];
   groupItemTitle?: string;
+  events?: GammaMarketResponse[];
   endDate?: string;
   endDateIso?: string;
   end_date_iso?: string;
@@ -43,9 +51,9 @@ const GAMMA_CACHE_TTL_MS = 20_000;
 const GAMMA_COOLDOWN_MS = 90_000;
 
 const gammaCache: Partial<Record<Asset, { updatedAt: number; data: PolymarketContract[] }>> = {};
-let gammaCooldownUntil = 0;
-let gammaInFlight: Promise<GammaFetchSnapshot> | null = null;
-let lastGammaDiagnostics: PolymarketDiagnostics | null = null;
+const gammaCooldownUntil: Partial<Record<Asset, number>> = {};
+const gammaInFlight: Partial<Record<Asset, Promise<GammaFetchSnapshot>>> = {};
+const lastGammaDiagnostics: Partial<Record<Asset, PolymarketDiagnostics>> = {};
 
 interface GammaFetchSnapshot {
   allContracts: PolymarketContract[];
@@ -53,7 +61,7 @@ interface GammaFetchSnapshot {
 }
 
 function isGammaEnabled() {
-  // Default to enabled. Set NEXT_PUBLIC_ENABLE_GAMMA=false to force mock-only mode.
+  // Default to enabled. Set NEXT_PUBLIC_ENABLE_GAMMA=false to disable external Polymarket requests.
   return process.env.NEXT_PUBLIC_ENABLE_GAMMA !== "false";
 }
 
@@ -61,7 +69,7 @@ function inferTimeframe(text: string): ContinuousTimeframe | null {
   const value = text.toLowerCase();
   if (/\b5\s*m(?:in(?:ute)?s?)?\b/.test(value) || value.includes("5分钟")) return "5m";
   if (/\b15\s*m(?:in(?:ute)?s?)?\b/.test(value) || value.includes("15分钟")) return "15m";
-  if (/\b1\s*h(?:our)?\b/.test(value) || value.includes("1小时")) return "1h";
+  if (/\b1\s*h(?:our)?\b/.test(value) || value.includes("hourly") || value.includes("1小时")) return "1h";
   if (/\b4\s*h(?:our)?\b/.test(value) || value.includes("4小时")) return "4h";
   if (value.includes("daily") || value.includes("1d") || value.includes("day") || value.includes("每天")) return "1d";
   return null;
@@ -81,8 +89,12 @@ function inferTimeframeFromDates(startDate: string | undefined, endDate: string)
 
 function inferAsset(text: string): Asset | null {
   const value = text.toLowerCase();
-  if (value.includes("bitcoin") || value.includes("btc") || value.includes("比特币")) return "BTC";
-  if (value.includes("ethereum") || value.includes("eth") || value.includes("以太坊")) return "ETH";
+  if (value.includes("bitcoin") || /\bbtc\b/.test(value) || value.includes("比特币")) return "BTC";
+  if (value.includes("ethereum") || /\beth\b/.test(value) || value.includes("以太坊")) return "ETH";
+  if (value.includes("solana") || /\bsol\b/.test(value)) return "SOL";
+  if (/\bxrp\b/.test(value) || value.includes("ripple")) return "XRP";
+  if (value.includes("dogecoin") || /\bdoge\b/.test(value)) return "DOGE";
+  if (/\bbnb\b/.test(value) || value.includes("binance coin")) return "BNB";
   return null;
 }
 
@@ -98,6 +110,23 @@ function inferMarketType(text: string): PolymarketContract["marketType"] {
     return "directional";
   }
   return "price-target";
+}
+
+function inferPriceTargetType(text: string): PolymarketContract["priceTargetType"] {
+  const value = text.toLowerCase();
+  if (value.includes("between") || value.includes("range") || parsePriceRange(value)) return "range";
+  if (value.includes("hit") || value.includes("reach") || value.includes("touch")) return "hit";
+  if (
+    value.includes("above") ||
+    value.includes("below") ||
+    value.includes("greater than") ||
+    value.includes("less than") ||
+    value.includes("over ") ||
+    value.includes("under ")
+  ) {
+    return "above-below";
+  }
+  return "generic";
 }
 
 function parseArrayField(value: string[] | string | undefined): string[] {
@@ -148,7 +177,12 @@ function parsePriceRange(text: string): { low: number; high: number } | null {
 
 function isPlausibleAssetPrice(asset: Asset, price: number) {
   if (asset === "BTC") return price >= 5_000 && price <= 500_000;
-  return price >= 100 && price <= 50_000;
+  if (asset === "ETH") return price >= 100 && price <= 50_000;
+  if (asset === "SOL") return price >= 1 && price <= 10_000;
+  if (asset === "XRP") return price >= 0.05 && price <= 50;
+  if (asset === "DOGE") return price >= 0.001 && price <= 10;
+  if (asset === "BNB") return price >= 10 && price <= 10_000;
+  return false;
 }
 
 function inferPriceTargetsFromText(text: string, asset: Asset) {
@@ -265,6 +299,7 @@ function applyMarketPriceFields(market: GammaMarketResponse, yes: number) {
 }
 
 function getMarketText(market: GammaMarketResponse) {
+  const event = Array.isArray(market.events) ? market.events[0] : undefined;
   return [
     market.question,
     market.title,
@@ -277,6 +312,12 @@ function getMarketText(market: GammaMarketResponse) {
     market.seriesTitle,
     market.seriesSlug,
     market.seriesRecurrence,
+    event?.title,
+    event?.slug,
+    event?.ticker,
+    event?.seriesTitle,
+    event?.seriesSlug,
+    event?.seriesRecurrence,
     ...(market.tagLabels ?? []),
     ...(market.tagSlugs ?? []),
   ]
@@ -285,7 +326,8 @@ function getMarketText(market: GammaMarketResponse) {
 }
 
 function inferStartDate(market: GammaMarketResponse) {
-  return market.eventStartTime ?? market.eventStartDate ?? market.startDate ?? market.start_date_iso;
+  const event = Array.isArray(market.events) ? market.events[0] : undefined;
+  return market.eventStartTime ?? market.eventStartDate ?? market.startDate ?? market.start_date_iso ?? event?.startDate;
 }
 
 function normalizeEndDate(market: GammaMarketResponse) {
@@ -368,6 +410,7 @@ function toContract(market: GammaMarketResponse): PolymarketContract | null {
   if (!asset || !endDate || !isActuallyOpen(market, endDate)) return null;
 
   const inferredType = inferMarketType(text);
+  const priceTargetType = inferredType === "directional" ? undefined : inferPriceTargetType(text);
   const rawLevels = inferPriceTargetLevels(market, asset);
   const marketType = inferredType === "directional" ? "directional" : "price-target";
   const timeframe = inferTimeframe(text) ?? inferTimeframeFromDates(inferStartDate(market), endDate);
@@ -387,11 +430,13 @@ function toContract(market: GammaMarketResponse): PolymarketContract | null {
     startDate: inferStartDate(market),
     endDate,
     probabilities: { yes, no: clamp(1 - yes, 0, 1) },
+    quoteMode: "gamma",
     clobTokenIds,
     yesTokenId,
     noTokenId,
     status: "active",
     marketType,
+    priceTargetType,
     priceTargets:
       marketType === "price-target"
         ? (priceTargetLevels?.length ?? 0) > 0
@@ -411,6 +456,112 @@ export async function fetchGammaContracts(asset: Asset): Promise<PolymarketContr
   return snapshot.contracts;
 }
 
+function formatEndDateLabel(endDate: string) {
+  const date = new Date(endDate);
+  if (Number.isNaN(date.getTime())) {
+    return "到期";
+  }
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+export function asPriceTargetPredictions(
+  contracts: PolymarketContract[],
+  markPrice: number | null,
+  timeframe?: ContinuousTimeframe | "1m",
+): PriceTargetPrediction[] {
+  const maxDistance = timeframe && timeframe !== "1d" ? 0.08 : 0.12;
+  const maxTargets = timeframe && timeframe !== "1d" ? 5 : 8;
+  const candidates = contracts
+    .filter((contract) => contract.marketType === "price-target")
+    .flatMap((contract, index) => {
+      const levels =
+        contract.priceTargetLevels && contract.priceTargetLevels.length > 0
+          ? contract.priceTargetLevels
+          : (contract.priceTargets ?? []).map((price) => ({
+              label: `${Math.round(price)}`,
+              price,
+              yesProbability: contract.probabilities.yes,
+            }));
+
+      return levels.map((level, levelIndex) => ({
+        id: `${contract.id}-level-${levelIndex}`,
+        label: `目标位 ${index + 1}`,
+        timeLabel: formatEndDateLabel(contract.endDate),
+        price: level.price,
+        yesProbability: level.yesProbability,
+        timeframe: contract.timeframe,
+        source: contract.source,
+        marketId: contract.id,
+        conditionId: contract.conditionId,
+        question: contract.title,
+        matchQuality: contract.matchQuality,
+        priceTargetType: contract.priceTargetType,
+        endTime: new Date(contract.endDate).getTime(),
+      }));
+    })
+    .filter((target) => Number.isFinite(target.price) && target.price > 0)
+    .filter((target) => target.yesProbability >= 0.01 && target.yesProbability <= 0.99)
+    .filter((target) => {
+      if (!markPrice) return true;
+      return Math.abs(target.price - markPrice) / markPrice <= maxDistance;
+    });
+
+  const byPrice = new Map<string, (typeof candidates)[number]>();
+  for (const target of candidates) {
+    const priceBucket = target.price >= 10_000 ? Math.round(target.price).toString() : target.price.toFixed(2);
+    const older = byPrice.get(priceBucket);
+    if (!older || target.endTime < older.endTime) {
+      byPrice.set(priceBucket, target);
+    }
+  }
+
+  return Array.from(byPrice.values())
+    .sort((a, b) => {
+      if (markPrice) {
+        const distanceA = Math.abs(a.price - markPrice);
+        const distanceB = Math.abs(b.price - markPrice);
+        if (distanceA !== distanceB) return distanceA - distanceB;
+      }
+      return a.endTime - b.endTime || b.yesProbability - a.yesProbability;
+    })
+    .slice(0, maxTargets)
+    .map((target) => ({
+      id: target.id,
+      label: target.label,
+      timeLabel: target.timeLabel,
+      price: target.price,
+      yesProbability: target.yesProbability,
+      timeframe: target.timeframe,
+      source: target.source,
+      marketId: target.marketId,
+      conditionId: target.conditionId,
+      question: target.question,
+      matchQuality: target.matchQuality,
+      priceTargetType: target.priceTargetType,
+    }));
+}
+
+export function asDirectionalPredictions(contracts: PolymarketContract[]): DirectionalPrediction[] {
+  return contracts
+    .filter((contract) => contract.marketType === "directional")
+    .map((contract) => ({
+      timeframe: contract.timeframe as DirectionalPrediction["timeframe"],
+      yes: contract.probabilities.yes,
+      no: contract.probabilities.no,
+      buyYes: contract.quotes?.yes?.ask,
+      buyNo: contract.quotes?.no?.ask,
+      yesQuote: contract.quotes?.yes,
+      noQuote: contract.quotes?.no,
+      quoteMode: contract.quoteMode,
+      marketId: contract.id,
+      conditionId: contract.conditionId,
+      startDate: contract.startDate,
+      endDate: contract.endDate,
+      source: contract.source,
+      status: contract.status,
+    }));
+}
+
 export async function fetchGammaSnapshot(
   asset: Asset,
 ): Promise<{ contracts: PolymarketContract[]; diagnostics: PolymarketDiagnostics }> {
@@ -423,7 +574,7 @@ export async function fetchGammaSnapshot(
         fetchedAt: null,
         rawCount: 0,
         parsedCount: 0,
-        sourceMode: "mock",
+        sourceMode: "real",
       },
     };
   }
@@ -431,7 +582,7 @@ export async function fetchGammaSnapshot(
   const now = Date.now();
   const cached = gammaCache[asset];
   if (cached && now - cached.updatedAt < GAMMA_CACHE_TTL_MS) {
-    const baseDiagnostics = lastGammaDiagnostics;
+    const baseDiagnostics = lastGammaDiagnostics[asset];
     return {
       contracts: cached.data,
       diagnostics: {
@@ -445,8 +596,8 @@ export async function fetchGammaSnapshot(
     };
   }
 
-  if (now < gammaCooldownUntil) {
-    const baseDiagnostics = lastGammaDiagnostics;
+  if (now < (gammaCooldownUntil[asset] ?? 0)) {
+    const baseDiagnostics = lastGammaDiagnostics[asset];
     return {
       contracts: cached?.data ?? [],
       diagnostics: {
@@ -455,13 +606,13 @@ export async function fetchGammaSnapshot(
         fetchedAt: baseDiagnostics?.fetchedAt ?? cached?.updatedAt ?? null,
         rawCount: baseDiagnostics?.rawCount ?? 0,
         parsedCount: cached?.data.length ?? 0,
-        sourceMode: cached?.data?.length ? "real" : "mock",
+        sourceMode: "real",
       },
     };
   }
 
-  if (!gammaInFlight) {
-    gammaInFlight = (async () => {
+  if (!gammaInFlight[asset]) {
+    gammaInFlight[asset] = (async () => {
       try {
         const res = await fetch(`/api/polymarket/markets?asset=${asset}`, {
           cache: "no-store",
@@ -487,9 +638,8 @@ export async function fetchGammaSnapshot(
           .filter((item) => relevanceScore(item) > 0)
           .sort((a, b) => relevanceScore(b) - relevanceScore(a) || new Date(a.endDate).getTime() - new Date(b.endDate).getTime());
 
-        gammaCache.BTC = { updatedAt: current, data: all.filter((item) => item.asset === "BTC") };
-        gammaCache.ETH = { updatedAt: current, data: all.filter((item) => item.asset === "ETH") };
-        gammaCooldownUntil = 0;
+        gammaCache[asset] = { updatedAt: current, data: all.filter((contract) => contract.asset === asset) };
+        gammaCooldownUntil[asset] = 0;
         const diagnostics: PolymarketDiagnostics = {
           ok: json.ok,
           reason: json.reason ?? null,
@@ -498,35 +648,35 @@ export async function fetchGammaSnapshot(
           parsedCount: all.length,
           sourceMode: "real",
         };
-        lastGammaDiagnostics = diagnostics;
+        lastGammaDiagnostics[asset] = diagnostics;
         return {
           allContracts: all,
           diagnostics,
         };
       } catch (error) {
         void error;
-        gammaCooldownUntil = Date.now() + GAMMA_COOLDOWN_MS;
-        const staleAllContracts = [...(gammaCache.BTC?.data ?? []), ...(gammaCache.ETH?.data ?? [])];
+        gammaCooldownUntil[asset] = Date.now() + GAMMA_COOLDOWN_MS;
+        const staleAllContracts = ASSETS.flatMap((item) => gammaCache[item]?.data ?? []);
         const diagnostics: PolymarketDiagnostics = {
           ok: false,
-          reason: staleAllContracts.length > 0 ? "gamma_fetch_failed_using_stale_real" : "gamma_fetch_failed",
+          reason: staleAllContracts.length > 0 ? "gamma_fetch_failed_using_stale_real" : "gamma_fetch_failed_no_data",
           fetchedAt: Date.now(),
-          rawCount: lastGammaDiagnostics?.rawCount ?? 0,
+          rawCount: lastGammaDiagnostics[asset]?.rawCount ?? 0,
           parsedCount: staleAllContracts.length,
-          sourceMode: staleAllContracts.length > 0 ? "real" : "mock",
+          sourceMode: "real",
         };
-        lastGammaDiagnostics = diagnostics;
+        lastGammaDiagnostics[asset] = diagnostics;
         return {
           allContracts: staleAllContracts,
           diagnostics,
         };
       } finally {
-        gammaInFlight = null;
+        delete gammaInFlight[asset];
       }
     })();
   }
 
-  const snapshot = await gammaInFlight;
+  const snapshot = await gammaInFlight[asset];
   return {
     contracts: snapshot.allContracts.filter((item) => item.asset === asset),
     diagnostics: {
@@ -540,8 +690,12 @@ export function pickNearestDirectional(
   contracts: PolymarketContract[],
   timeframe: ContinuousTimeframe,
 ): PolymarketContract | null {
+  const now = Date.now();
   return (
-    contracts.find((item) => item.marketType === "directional" && item.timeframe === timeframe) ??
-    null
+    contracts
+      .filter((item) => item.marketType === "directional")
+      .filter((item) => item.timeframe === timeframe)
+      .filter((item) => item.status === "active" && new Date(item.endDate).getTime() > now)
+      .sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime())[0] ?? null
   );
 }

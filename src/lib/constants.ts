@@ -1,6 +1,6 @@
 import type { Asset, SidebarFilter, Timeframe } from "@/lib/types";
 
-export const ASSETS: Asset[] = ["BTC", "ETH"];
+export const ASSETS: Asset[] = ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB"];
 
 export const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 

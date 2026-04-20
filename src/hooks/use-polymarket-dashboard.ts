@@ -2,10 +2,11 @@
 
 import useSWR from "swr";
 import { useEffect, useMemo, useState } from "react";
-import type { Asset, PolymarketContract, PolymarketDiagnostics, Timeframe } from "@/lib/types";
-import { mockDirectionalMarkets, mockPriceTargetMarkets } from "@/lib/mock-polymarket";
-import { fetchGammaSnapshot } from "@/lib/polymarket";
+import type { Asset, OutcomeQuote, PolymarketContract, PolymarketDiagnostics, Timeframe } from "@/lib/types";
 import { clamp } from "@/lib/utils";
+import { fetchGammaSnapshot } from "@/lib/polymarket";
+
+type QuoteMap = Record<string, OutcomeQuote>;
 
 function toStatus(endDate: string): PolymarketContract["status"] {
   return new Date(endDate).getTime() > Date.now() ? "active" : "closed";
@@ -14,7 +15,8 @@ function toStatus(endDate: string): PolymarketContract["status"] {
 function marketScore(market: PolymarketContract, timeframe: Timeframe, markPrice: number | null) {
   let score = 0;
   if (market.timeframe === timeframe) score += 5;
-  if (market.marketType === "directional") score += 3;
+  if (market.marketType === "directional") score += 2;
+  if (market.marketType === "price-target") score += 4;
   if (market.matchQuality === "strict") score += 3;
   if (market.source === "real") score += 2;
 
@@ -29,13 +31,35 @@ function marketScore(market: PolymarketContract, timeframe: Timeframe, markPrice
       [];
     if (prices.length > 0) {
       const nearestDiff = Math.min(...prices.map((price) => Math.abs(price - markPrice) / markPrice));
-      if (nearestDiff <= 0.08) score += 3;
-      else if (nearestDiff <= 0.15) score += 1;
-      else score -= 3;
+      if (nearestDiff <= 0.06) score += 6;
+      else if (nearestDiff <= 0.1) score += 4;
+      else if (nearestDiff <= 0.18) score += 1;
+      else score -= 4;
     }
   }
 
   return score;
+}
+
+function withDashboardQuotes(market: PolymarketContract, quoteMap: QuoteMap): PolymarketContract {
+  const yesQuote = market.yesTokenId ? quoteMap[market.yesTokenId] : undefined;
+  const noQuote = market.noTokenId ? quoteMap[market.noTokenId] : undefined;
+  if (!yesQuote && !noQuote) return market;
+
+  const yes = yesQuote?.mid ?? yesQuote?.price ?? market.probabilities.yes;
+  const no = noQuote?.mid ?? noQuote?.price ?? market.probabilities.no;
+  return {
+    ...market,
+    probabilities: {
+      yes: clamp(yes, 0, 1),
+      no: clamp(no, 0, 1),
+    },
+    quotes: {
+      yes: yesQuote ?? market.quotes?.yes,
+      no: noQuote ?? market.quotes?.no,
+    },
+    quoteMode: "clob",
+  };
 }
 
 export function usePolymarketDashboard(asset: Asset, timeframe: Timeframe, markPrice: number | null) {
@@ -45,27 +69,12 @@ export function usePolymarketDashboard(asset: Asset, timeframe: Timeframe, markP
     key,
     async () => {
       const snapshot = await fetchGammaSnapshot(asset);
-      if (snapshot.contracts.length > 0) {
-        return {
-          markets: snapshot.contracts.map((item) => ({
-            ...item,
-            status: toStatus(item.endDate),
-          })),
-          diagnostics: snapshot.diagnostics,
-        };
-      }
-
-      const directional = mockDirectionalMarkets(asset);
-      const targets = mockPriceTargetMarkets(asset, markPrice ?? (asset === "BTC" ? 70000 : 3000));
       return {
-        markets: [...directional, ...targets].map((item) => ({
+        markets: snapshot.contracts.map((item) => ({
           ...item,
           status: toStatus(item.endDate),
         })),
-        diagnostics: {
-          ...snapshot.diagnostics,
-          sourceMode: "mock",
-        },
+        diagnostics: snapshot.diagnostics,
       };
     },
     {
@@ -78,6 +87,7 @@ export function usePolymarketDashboard(asset: Asset, timeframe: Timeframe, markP
   );
 
   const [liveMarkets, setLiveMarkets] = useState<PolymarketContract[]>([]);
+  const [quoteMap, setQuoteMap] = useState<QuoteMap>({});
 
   useEffect(() => {
     if (!data) {
@@ -90,47 +100,14 @@ export function usePolymarketDashboard(asset: Asset, timeframe: Timeframe, markP
           return data.markets;
         }
 
-        const prevMap = new Map(prev.map((item) => [item.id, item]));
-        return data.markets.map((item) => {
-          const older = prevMap.get(item.id);
-          if (!older || item.source !== "mock") {
-            return item;
-          }
-          return {
-            ...item,
-            probabilities: older.probabilities,
-          };
-        });
+        return data.markets;
       });
     }, 0);
 
     return () => window.clearTimeout(timer);
   }, [data]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setLiveMarkets((prev) =>
-        prev.map((item) => {
-          if (item.source !== "mock" || item.status !== "active") {
-            return item;
-          }
-          const drift = (Math.random() - 0.5) * 0.04;
-          const yes = clamp(item.probabilities.yes + drift, 0.03, 0.97);
-          return {
-            ...item,
-            probabilities: {
-              yes,
-              no: clamp(1 - yes, 0, 1),
-            },
-          };
-        }),
-      );
-    }, 2000);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const markets = useMemo(() => {
+  const rankedMarkets = useMemo(() => {
     const list = liveMarkets;
     if (list.length === 0) {
       return list;
@@ -146,8 +123,54 @@ export function usePolymarketDashboard(asset: Asset, timeframe: Timeframe, markP
     }).filter((market) => marketScore(market, timeframe, markPrice) > 0).slice(0, 20);
   }, [liveMarkets, markPrice, timeframe]);
 
+  useEffect(() => {
+    const tokenIds = Array.from(
+      new Set(
+        rankedMarkets
+          .filter((market) => market.marketType === "directional")
+          .flatMap((market) => [market.yesTokenId, market.noTokenId])
+          .filter((item): item is string => Boolean(item)),
+      ),
+    ).slice(0, 40);
+
+    if (tokenIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    async function loadQuotes() {
+      try {
+        const response = await fetch("/api/polymarket/quotes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tokenIds }),
+          cache: "no-store",
+        });
+        const json = (await response.json()) as { ok?: boolean; data?: QuoteMap };
+        if (!cancelled && json.ok && json.data) {
+          setQuoteMap(json.data);
+        }
+      } catch {
+        // Keep existing quotes until the next poll succeeds.
+      }
+    }
+
+    loadQuotes();
+    const interval = window.setInterval(loadQuotes, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [rankedMarkets]);
+
+  const markets = useMemo(
+    () => rankedMarkets.map((market) => withDashboardQuotes(market, quoteMap)),
+    [quoteMap, rankedMarkets],
+  );
+
   return {
     markets,
+    allMarkets: liveMarkets,
     isLoading,
     diagnostics:
       data?.diagnostics ??
@@ -157,7 +180,7 @@ export function usePolymarketDashboard(asset: Asset, timeframe: Timeframe, markP
         fetchedAt: null,
         rawCount: 0,
         parsedCount: 0,
-        sourceMode: "mock",
+        sourceMode: "real",
       } satisfies PolymarketDiagnostics),
   };
 }
