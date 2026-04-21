@@ -10,6 +10,7 @@ export interface KlinePoint {
   high: number;
   low: number;
   close: number;
+  volume?: number;
 }
 
 export interface PriceTargetPrediction {
@@ -25,6 +26,9 @@ export interface PriceTargetPrediction {
   question: string;
   matchQuality: "strict" | "heuristic";
   priceTargetType?: "above-below" | "range" | "hit" | "generic";
+  comparator?: "above" | "below";
+  rangeLow?: number;
+  rangeHigh?: number;
 }
 
 export interface OutcomeQuote {
@@ -87,6 +91,9 @@ export interface ChartIndicators {
     fast: number;
     slow: number;
     signal: number;
+  };
+  dfma: {
+    enabled: boolean;
   };
 }
 

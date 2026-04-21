@@ -4,12 +4,14 @@ import { CandlestickChart, Search, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { MarketCard } from "@/components/market-card";
-import { TradingChart } from "@/components/trading-chart";
+import { TradingChart, type PredictionLayerVisibility } from "@/components/trading-chart";
 import { useBinanceKline } from "@/hooks/use-binance-kline";
 import { useContinuousMarket } from "@/hooks/use-continuous-market";
 import { usePolymarketDashboard } from "@/hooks/use-polymarket-dashboard";
 import { ASSETS, TIMEFRAMES } from "@/lib/constants";
+import { calcMarketSessionStats, type MarketSessionKey, type MarketSessionVisibility } from "@/lib/market-sessions";
 import { asDirectionalPredictions, asPriceTargetPredictions } from "@/lib/polymarket";
+import { calcPredictionSentiment } from "@/lib/prediction-sentiment";
 import type { Asset, ChartIndicators, DirectionalPrediction, PolymarketContract, Timeframe } from "@/lib/types";
 
 function toDirectionalPrediction(
@@ -34,6 +36,12 @@ function toDirectionalPrediction(
   };
 }
 
+function formatSignedPct(value: number) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+const SESSION_KEYS: MarketSessionKey[] = ["nasdaq", "london", "tokyo", "hongKong"];
+
 export function TradingTerminal() {
   const [asset, setAsset] = useState<Asset>("BTC");
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
@@ -43,6 +51,26 @@ export function TradingTerminal() {
     boll: { enabled: false, period: 20, stdDev: 2 },
     rsi: { enabled: false, period: 14 },
     macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
+    dfma: { enabled: false },
+  });
+  const [predictionVisibility, setPredictionVisibility] = useState<PredictionLayerVisibility>({
+    directional: true,
+    aboveBelow: true,
+    range: true,
+    hit: true,
+  });
+  const [sessionVisibility, setSessionVisibility] = useState<MarketSessionVisibility>({
+    nasdaq: true,
+    london: false,
+    tokyo: false,
+    hongKong: false,
+  });
+  const [isSentimentCollapsed, setIsSentimentCollapsed] = useState(false);
+  const [collapsedSessionStats, setCollapsedSessionStats] = useState<Record<MarketSessionKey, boolean>>({
+    nasdaq: false,
+    london: false,
+    tokyo: false,
+    hongKong: false,
   });
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -85,9 +113,43 @@ export function TradingTerminal() {
     () => asPriceTargetPredictions(targetSourceMarkets, markPrice, timeframe),
     [markPrice, targetSourceMarkets, timeframe],
   );
+  const visibleTargetPredictions = useMemo(
+    () =>
+      targetPredictions.filter((target) => {
+        if (target.priceTargetType === "above-below") return predictionVisibility.aboveBelow;
+        if (target.priceTargetType === "range") return predictionVisibility.range;
+        if (target.priceTargetType === "hit") return predictionVisibility.hit;
+        return predictionVisibility.hit;
+      }),
+    [predictionVisibility.aboveBelow, predictionVisibility.hit, predictionVisibility.range, targetPredictions],
+  );
+  const targetTypeAvailability = useMemo(
+    () => ({
+      aboveBelow: targetPredictions.some((target) => target.priceTargetType === "above-below"),
+      range: targetPredictions.some((target) => target.priceTargetType === "range"),
+      hit: targetPredictions.some(
+        (target) => target.priceTargetType === "hit" || !target.priceTargetType || target.priceTargetType === "generic",
+      ),
+    }),
+    [targetPredictions],
+  );
   const directionalPredictions = useMemo(
     () => asDirectionalPredictions(markets.filter((item) => item.source === "real")),
     [markets],
+  );
+  const predictionSentiment = useMemo(
+    () =>
+      calcPredictionSentiment({
+        directional: directionalPredictions,
+        targets: targetPredictions,
+        markets: targetSourceMarkets,
+        markPrice,
+      }),
+    [directionalPredictions, markPrice, targetPredictions, targetSourceMarkets],
+  );
+  const sessionStatsList = useMemo(
+    () => SESSION_KEYS.filter((key) => sessionVisibility[key]).map((key) => calcMarketSessionStats(candles, key, 6)),
+    [candles, sessionVisibility],
   );
   const selectedDirectional = useMemo<DirectionalPrediction | null>(() => {
     const map = new Map<DirectionalPrediction["timeframe"], DirectionalPrediction>();
@@ -235,6 +297,82 @@ export function TradingTerminal() {
             >
               MACD
             </Button>
+            <Button
+              size="sm"
+              variant={indicators.dfma.enabled ? "green" : "ghost"}
+              onClick={() => setIndicators((prev) => ({ ...prev, dfma: { enabled: !prev.dfma.enabled } }))}
+            >
+              DFMA
+            </Button>
+            <div className="h-5 w-px bg-zinc-800" />
+            <Button
+              size="sm"
+              variant={predictionVisibility.directional ? "green" : "ghost"}
+              onClick={() =>
+                setPredictionVisibility((prev) => ({ ...prev, directional: !prev.directional }))
+              }
+            >
+              涨跌
+            </Button>
+            <Button
+              size="sm"
+              variant={targetTypeAvailability.aboveBelow && predictionVisibility.aboveBelow ? "green" : "ghost"}
+              disabled={!targetTypeAvailability.aboveBelow}
+              onClick={() =>
+                setPredictionVisibility((prev) => ({ ...prev, aboveBelow: !prev.aboveBelow }))
+              }
+            >
+              高于/低于
+            </Button>
+            <Button
+              size="sm"
+              variant={targetTypeAvailability.range && predictionVisibility.range ? "green" : "ghost"}
+              disabled={!targetTypeAvailability.range}
+              onClick={() =>
+                setPredictionVisibility((prev) => ({ ...prev, range: !prev.range }))
+              }
+            >
+              区间
+            </Button>
+            <Button
+              size="sm"
+              variant={targetTypeAvailability.hit && predictionVisibility.hit ? "green" : "ghost"}
+              disabled={!targetTypeAvailability.hit}
+              onClick={() =>
+                setPredictionVisibility((prev) => ({ ...prev, hit: !prev.hit }))
+              }
+            >
+              触及
+            </Button>
+            <div className="h-5 w-px bg-zinc-800" />
+            <Button
+              size="sm"
+              variant={sessionVisibility.nasdaq ? "green" : "ghost"}
+              onClick={() => setSessionVisibility((prev) => ({ ...prev, nasdaq: !prev.nasdaq }))}
+            >
+              NASDAQ
+            </Button>
+            <Button
+              size="sm"
+              variant={sessionVisibility.london ? "green" : "ghost"}
+              onClick={() => setSessionVisibility((prev) => ({ ...prev, london: !prev.london }))}
+            >
+              London
+            </Button>
+            <Button
+              size="sm"
+              variant={sessionVisibility.tokyo ? "green" : "ghost"}
+              onClick={() => setSessionVisibility((prev) => ({ ...prev, tokyo: !prev.tokyo }))}
+            >
+              Tokyo
+            </Button>
+            <Button
+              size="sm"
+              variant={sessionVisibility.hongKong ? "green" : "ghost"}
+              onClick={() => setSessionVisibility((prev) => ({ ...prev, hongKong: !prev.hongKong }))}
+            >
+              HK
+            </Button>
             <select
               className="h-8 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-xs text-zinc-200"
               value={indicators.ma.type}
@@ -290,9 +428,11 @@ export function TradingTerminal() {
           <div className="relative">
             <TradingChart
               candles={candles}
-              targets={targetPredictions}
-              directional={selectedDirectional}
+              targets={visibleTargetPredictions}
+              directional={predictionVisibility.directional ? selectedDirectional : null}
               indicators={indicators}
+              visibility={predictionVisibility}
+              sessions={sessionVisibility}
             />
             <div className="pointer-events-none absolute left-4 top-4 w-56 rounded-lg border border-emerald-500/30 bg-black/60 p-3 backdrop-blur">
               <div className="mb-2 text-xs text-zinc-400">短线预测</div>
@@ -367,6 +507,156 @@ export function TradingTerminal() {
               {diagnostics.fetchedAt ? ` | ${new Date(diagnostics.fetchedAt).toLocaleTimeString()}` : ""}
             </div>
           </div>
+          <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3">
+            <button
+              type="button"
+              className="mb-2 flex w-full items-center justify-between text-left"
+              onClick={() => setIsSentimentCollapsed((prev) => !prev)}
+              aria-expanded={!isSentimentCollapsed}
+            >
+              <div className="text-xs font-medium text-zinc-300">预测情绪</div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-sm font-semibold ${
+                    predictionSentiment.direction === "bullish"
+                      ? "text-emerald-300"
+                      : predictionSentiment.direction === "bearish"
+                        ? "text-red-300"
+                        : "text-zinc-300"
+                  }`}
+                >
+                  {predictionSentiment.score > 0 ? "+" : ""}
+                  {predictionSentiment.score}
+                </span>
+                <span className="text-xs text-zinc-500">{isSentimentCollapsed ? "+" : "-"}</span>
+              </div>
+            </button>
+            {!isSentimentCollapsed && (
+              <>
+                <div className="mb-2 h-2 overflow-hidden rounded bg-zinc-800">
+                  <div
+                    className={`h-full ${
+                      predictionSentiment.direction === "bullish"
+                        ? "bg-emerald-400"
+                        : predictionSentiment.direction === "bearish"
+                          ? "bg-red-400"
+                          : "bg-zinc-500"
+                    }`}
+                    style={{ width: `${Math.max(6, predictionSentiment.confidence * 100)}%` }}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  {predictionSentiment.breakdown.map((item) => (
+                    <div key={item.label} className="rounded-md bg-zinc-900 px-2 py-1">
+                      <div className="flex items-center justify-between text-zinc-400">
+                        <span>{item.label}</span>
+                        <span>{item.count}</span>
+                      </div>
+                      <div className={item.score > 8 ? "text-emerald-300" : item.score < -8 ? "text-red-300" : "text-zinc-300"}>
+                        {item.score > 0 ? "+" : ""}
+                        {item.score}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          {sessionStatsList.length === 0 ? (
+            <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs text-zinc-500">
+              开启至少一个市场时段后显示统计
+            </div>
+          ) : (
+            sessionStatsList.map((sessionStats) => {
+              const isCollapsed = collapsedSessionStats[sessionStats.session as MarketSessionKey];
+              return (
+                <div key={sessionStats.session} className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3">
+                  <button
+                    type="button"
+                    className="mb-2 flex w-full items-center justify-between text-left"
+                    onClick={() =>
+                      setCollapsedSessionStats((prev) => ({
+                        ...prev,
+                        [sessionStats.session]: !prev[sessionStats.session as MarketSessionKey],
+                      }))
+                    }
+                    aria-expanded={!isCollapsed}
+                  >
+                    <div className="text-xs font-medium text-zinc-300">{sessionStats.label} 时段统计</div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={
+                          sessionStats.avgChangePct >= 0
+                            ? "text-sm font-semibold text-emerald-300"
+                            : "text-sm font-semibold text-red-300"
+                        }
+                      >
+                        {formatSignedPct(sessionStats.avgChangePct)}
+                      </span>
+                      <span className="text-xs text-zinc-500">{isCollapsed ? "+" : "-"}</span>
+                    </div>
+                  </button>
+                  {!isCollapsed && (
+                    <>
+                      <div className="mb-2 grid grid-cols-3 gap-2 text-[11px]">
+                        <div className="rounded-md bg-zinc-900 px-2 py-1">
+                          <div className="text-zinc-500">样本</div>
+                          <div className="text-zinc-200">{sessionStats.total}</div>
+                        </div>
+                        <div className="rounded-md bg-zinc-900 px-2 py-1">
+                          <div className="text-zinc-500">上涨</div>
+                          <div className="text-emerald-300">
+                            {sessionStats.up}/{sessionStats.total || 0}
+                          </div>
+                        </div>
+                        <div className="rounded-md bg-zinc-900 px-2 py-1">
+                          <div className="text-zinc-500">胜率</div>
+                          <div className="text-zinc-200">{Math.round(sessionStats.winRate * 100)}%</div>
+                        </div>
+                        <div className="rounded-md bg-zinc-900 px-2 py-1">
+                          <div className="text-zinc-500">平均</div>
+                          <div className={sessionStats.avgChangePct >= 0 ? "text-emerald-300" : "text-red-300"}>
+                            {formatSignedPct(sessionStats.avgChangePct)}
+                          </div>
+                        </div>
+                        <div className="rounded-md bg-zinc-900 px-2 py-1">
+                          <div className="text-zinc-500">最大</div>
+                          <div className={sessionStats.maxChangePct >= 0 ? "text-emerald-300" : "text-red-300"}>
+                            {formatSignedPct(sessionStats.maxChangePct)}
+                          </div>
+                        </div>
+                        <div className="rounded-md bg-zinc-900 px-2 py-1">
+                          <div className="text-zinc-500">最小</div>
+                          <div className={sessionStats.minChangePct >= 0 ? "text-emerald-300" : "text-red-300"}>
+                            {formatSignedPct(sessionStats.minChangePct)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-1 text-[11px]">
+                        {sessionStats.recent.length === 0 ? (
+                          <div className="text-zinc-500">当前 K 线范围内没有完整开收盘样本</div>
+                        ) : (
+                          sessionStats.recent.map((move) => (
+                            <div
+                              key={`${move.session}-${move.dayKey}`}
+                              className="flex items-center justify-between rounded bg-zinc-900/70 px-2 py-1"
+                            >
+                              <span className="text-zinc-400">
+                                {move.sessionLabel} {move.label}
+                              </span>
+                              <span className={move.changePct >= 0 ? "text-emerald-300" : "text-red-300"}>
+                                {formatSignedPct(move.changePct)}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })
+          )}
 
           {isKlineLoading && (
             <div className="mb-3 rounded border border-zinc-800 bg-zinc-900 p-3 text-sm text-zinc-400">行情加载中...</div>

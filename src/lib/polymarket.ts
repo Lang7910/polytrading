@@ -129,6 +129,29 @@ function inferPriceTargetType(text: string): PolymarketContract["priceTargetType
   return "generic";
 }
 
+function inferPriceComparator(text: string): PriceTargetPrediction["comparator"] | undefined {
+  const value = text.toLowerCase();
+  if (
+    value.includes("↓") ||
+    value.includes("below") ||
+    value.includes("less than") ||
+    value.includes("under ") ||
+    value.includes("lower than")
+  ) {
+    return "below";
+  }
+  if (
+    value.includes("↑") ||
+    value.includes("above") ||
+    value.includes("greater than") ||
+    value.includes("over ") ||
+    value.includes("higher than")
+  ) {
+    return "above";
+  }
+  return undefined;
+}
+
 function parseArrayField(value: string[] | string | undefined): string[] {
   if (!value) return [];
   if (Array.isArray(value)) return value;
@@ -469,8 +492,8 @@ export function asPriceTargetPredictions(
   markPrice: number | null,
   timeframe?: ContinuousTimeframe | "1m",
 ): PriceTargetPrediction[] {
-  const maxDistance = timeframe && timeframe !== "1d" ? 0.08 : 0.12;
-  const maxTargets = timeframe && timeframe !== "1d" ? 5 : 8;
+  const isShortTimeframe = timeframe && timeframe !== "1d";
+  const maxTargets = isShortTimeframe ? 18 : 24;
   const candidates = contracts
     .filter((contract) => contract.marketType === "price-target")
     .flatMap((contract, index) => {
@@ -485,7 +508,7 @@ export function asPriceTargetPredictions(
 
       return levels.map((level, levelIndex) => ({
         id: `${contract.id}-level-${levelIndex}`,
-        label: `目标位 ${index + 1}`,
+        label: level.label || `目标位 ${index + 1}`,
         timeLabel: formatEndDateLabel(contract.endDate),
         price: level.price,
         yesProbability: level.yesProbability,
@@ -496,26 +519,123 @@ export function asPriceTargetPredictions(
         question: contract.title,
         matchQuality: contract.matchQuality,
         priceTargetType: contract.priceTargetType,
+        comparator:
+          inferPriceComparator(level.label) ??
+          (contract.priceTargetType === "above-below" ? inferPriceComparator(contract.title) : undefined),
+        range: contract.priceTargetType === "range" ? parsePriceRange(level.label) ?? parsePriceRange(contract.title) : null,
         endTime: new Date(contract.endDate).getTime(),
       }));
     })
     .filter((target) => Number.isFinite(target.price) && target.price > 0)
+    .filter((target) => target.priceTargetType !== "range" || Boolean(target.range))
     .filter((target) => target.yesProbability >= 0.01 && target.yesProbability <= 0.99)
     .filter((target) => {
       if (!markPrice) return true;
-      return Math.abs(target.price - markPrice) / markPrice <= maxDistance;
+      const distance = Math.abs(target.price - markPrice) / markPrice;
+      if (target.priceTargetType === "hit") {
+        return distance <= (isShortTimeframe ? 0.35 : 0.45);
+      }
+      if (target.priceTargetType === "range") {
+        return distance <= (isShortTimeframe ? 0.1 : 0.15);
+      }
+      if (target.priceTargetType === "above-below") {
+        return distance <= (isShortTimeframe ? 0.25 : 0.35);
+      }
+      return distance <= (isShortTimeframe ? 0.08 : 0.12);
     });
 
   const byPrice = new Map<string, (typeof candidates)[number]>();
   for (const target of candidates) {
-    const priceBucket = target.price >= 10_000 ? Math.round(target.price).toString() : target.price.toFixed(2);
+    const priceBucket = target.range
+      ? `range:${target.range.low}-${target.range.high}:${target.priceTargetType ?? "generic"}`
+      : `${target.comparator ?? "na"}:${target.priceTargetType ?? "generic"}:${
+          target.price >= 10_000 ? Math.round(target.price).toString() : target.price.toFixed(2)
+        }`;
     const older = byPrice.get(priceBucket);
     if (!older || target.endTime < older.endTime) {
       byPrice.set(priceBucket, target);
     }
   }
 
-  return Array.from(byPrice.values())
+  const sorted = Array.from(byPrice.values()).sort((a, b) => {
+    const typeRank = (target: (typeof candidates)[number]) => {
+      if (target.priceTargetType === "range") return 0;
+      if (target.priceTargetType === "above-below") return 1;
+      if (target.priceTargetType === "hit") return 2;
+      return 3;
+    };
+    const rankDiff = typeRank(a) - typeRank(b);
+    if (rankDiff !== 0) return rankDiff;
+    if (markPrice) {
+      const distanceA = Math.abs(a.price - markPrice);
+      const distanceB = Math.abs(b.price - markPrice);
+      if (distanceA !== distanceB) return distanceA - distanceB;
+    }
+    return a.endTime - b.endTime || b.yesProbability - a.yesProbability;
+  });
+
+  const selected: (typeof sorted)[number][] = [];
+  const selectedIds = new Set<string>();
+  const priorityTypes: Array<PriceTargetPrediction["priceTargetType"] | "generic"> = ["range", "generic"];
+
+  for (const type of priorityTypes) {
+    const candidate = sorted.find((target) => {
+      const targetType = target.priceTargetType ?? "generic";
+      return targetType === type && !selectedIds.has(target.id);
+    });
+    if (candidate) {
+      selected.push(candidate);
+      selectedIds.add(candidate.id);
+    }
+  }
+
+  const thresholdCandidates = sorted
+    .filter((target) => target.priceTargetType === "above-below" && !selectedIds.has(target.id))
+    .sort((a, b) => {
+      if (markPrice) {
+        const distanceA = Math.abs(a.price - markPrice);
+        const distanceB = Math.abs(b.price - markPrice);
+        if (distanceA !== distanceB) return distanceA - distanceB;
+      }
+      return b.yesProbability - a.yesProbability || a.endTime - b.endTime;
+    })
+    .slice(0, isShortTimeframe ? 8 : 10);
+
+  for (const target of thresholdCandidates) {
+    if (selected.length >= maxTargets) break;
+    selected.push(target);
+    selectedIds.add(target.id);
+  }
+
+  const hitCandidates = sorted
+    .filter((target) => target.priceTargetType === "hit" && !selectedIds.has(target.id))
+    .sort((a, b) => {
+      if (markPrice) {
+        const aCrossSide = (a.price >= markPrice ? 1 : -1) * (a.comparator === "below" ? -1 : 1) < 0 ? 1 : 0;
+        const bCrossSide = (b.price >= markPrice ? 1 : -1) * (b.comparator === "below" ? -1 : 1) < 0 ? 1 : 0;
+        if (aCrossSide !== bCrossSide) return aCrossSide - bCrossSide;
+        const distanceA = Math.abs(a.price - markPrice);
+        const distanceB = Math.abs(b.price - markPrice);
+        if (distanceA !== distanceB) return distanceA - distanceB;
+      }
+      return b.yesProbability - a.yesProbability || a.endTime - b.endTime;
+    })
+    .slice(0, isShortTimeframe ? 8 : 10);
+
+  for (const target of hitCandidates) {
+    if (selected.length >= maxTargets) break;
+    selected.push(target);
+    selectedIds.add(target.id);
+  }
+
+  for (const target of sorted) {
+    if (selected.length >= maxTargets) break;
+    if (selectedIds.has(target.id)) continue;
+    selected.push(target);
+    selectedIds.add(target.id);
+  }
+
+  return selected
     .sort((a, b) => {
       if (markPrice) {
         const distanceA = Math.abs(a.price - markPrice);
@@ -524,7 +644,6 @@ export function asPriceTargetPredictions(
       }
       return a.endTime - b.endTime || b.yesProbability - a.yesProbability;
     })
-    .slice(0, maxTargets)
     .map((target) => ({
       id: target.id,
       label: target.label,
@@ -538,6 +657,9 @@ export function asPriceTargetPredictions(
       question: target.question,
       matchQuality: target.matchQuality,
       priceTargetType: target.priceTargetType,
+      comparator: target.comparator,
+      rangeLow: target.range?.low,
+      rangeHigh: target.range?.high,
     }));
 }
 

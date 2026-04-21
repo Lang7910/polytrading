@@ -81,6 +81,18 @@ function dailyEventSlug(assetName: string, ms: number) {
   return `${assetName}-up-or-down-on-${parts.month}-${parts.day}-${parts.year}`;
 }
 
+function etDateText(ms: number) {
+  const parts = getEtParts(ms);
+  if (!parts.month || !parts.day) return null;
+  return `${parts.month} ${parts.day}`;
+}
+
+function dailyHitPriceSlug(assetName: string, ms: number) {
+  const date = etDateText(ms);
+  if (!date) return null;
+  return `what-price-will-${assetName}-hit-on-${date.replace(/\s+/g, "-")}`;
+}
+
 function getRecurringEventSlugs(asset: keyof typeof RECURRING_ASSETS, now = Date.now()) {
   const assetSlugs = RECURRING_ASSETS[asset];
   const slugs = new Set<string>();
@@ -101,6 +113,11 @@ function getRecurringEventSlugs(asset: keyof typeof RECURRING_ASSETS, now = Date
 
   for (let offset = -1; offset <= 7; offset += 1) {
     const slug = dailyEventSlug(assetSlugs.long, now + offset * 24 * 60 * 60 * 1000);
+    if (slug) slugs.add(slug);
+  }
+
+  for (let offset = -1; offset <= 2; offset += 1) {
+    const slug = dailyHitPriceSlug(assetSlugs.long, now + offset * 24 * 60 * 60 * 1000);
     if (slug) slugs.add(slug);
   }
 
@@ -136,6 +153,9 @@ export async function GET(request: Request) {
   const assetName = RECURRING_ASSETS[asset].long;
   const assetSymbol = RECURRING_ASSETS[asset].short;
   const recurringSlugs = getRecurringEventSlugs(asset);
+  const etDateQueries = [-1, 0, 1, 2]
+    .map((offset) => etDateText(Date.now() + offset * 24 * 60 * 60 * 1000))
+    .filter((date): date is string => Boolean(date));
   const searchQueries = [
     `${assetName} what price`,
     `${assetSymbol} what price`,
@@ -149,6 +169,12 @@ export async function GET(request: Request) {
     `${assetName} hit`,
     `${assetName} reach`,
     `what price will ${assetName} hit`,
+    ...etDateQueries.flatMap((date) => [
+      `what price will ${assetName} hit on ${date}`,
+      `${assetName} hit on ${date}`,
+      `${assetName} price on ${date}`,
+      `${assetName} above on ${date}`,
+    ]),
     `${assetName} price on`,
     `${assetName} on april`,
   ];
