@@ -5,6 +5,7 @@ yarn-debug.log*
 yarn-error.log*
 Dockerfile
 .dockerignore
+deploy.sh
 .git
 .gitignore
 README.md
