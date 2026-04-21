@@ -11,6 +11,30 @@ interface UseBinanceKlineResult {
   markPrice: number | null;
 }
 
+type BinanceRestKline = [number, string, string, string, string, string, number, string, number, string, string, string];
+
+function restKlineToPoint(item: BinanceRestKline): KlinePoint {
+  return {
+    time: Math.floor(item[0] / 1000),
+    open: Number(item[1]),
+    high: Number(item[2]),
+    low: Number(item[3]),
+    close: Number(item[4]),
+    volume: Number(item[5]),
+  };
+}
+
+function mergeLatestCandles(prev: KlinePoint[], latest: KlinePoint[]) {
+  if (latest.length === 0) return prev;
+  const byTime = new Map(prev.map((item) => [item.time, item]));
+  for (const point of latest) {
+    byTime.set(point.time, point);
+  }
+  return Array.from(byTime.values())
+    .sort((a, b) => a.time - b.time)
+    .slice(-2000);
+}
+
 export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceKlineResult {
   const [candles, setCandles] = useState<KlinePoint[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -43,18 +67,8 @@ export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceK
           throw new Error(`Binance REST error: ${res.status}`);
         }
 
-        const payload = (await res.json()) as Array<
-          [number, string, string, string, string, string, number, string, number, string, string, string]
-        >;
-
-        const points = payload.map((item) => ({
-          time: Math.floor(item[0] / 1000),
-          open: Number(item[1]),
-          high: Number(item[2]),
-          low: Number(item[3]),
-          close: Number(item[4]),
-          volume: Number(item[5]),
-        }));
+        const payload = (await res.json()) as BinanceRestKline[];
+        const points = payload.map(restKlineToPoint);
 
         if (isMounted && requestIdRef.current === requestId) {
           setCandles(points);
@@ -159,6 +173,65 @@ export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceK
       if (wsRef.current === ws) {
         wsRef.current = null;
       }
+    };
+  }, [interval, symbol]);
+
+  useEffect(() => {
+    let isDisposed = false;
+    let isRefreshing = false;
+    let controller: AbortController | null = null;
+
+    async function refreshLatestCandles() {
+      if (isRefreshing) return;
+      isRefreshing = true;
+      const requestId = requestIdRef.current;
+      controller = new AbortController();
+      try {
+        const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=2`;
+        const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+        if (!res.ok) {
+          throw new Error(`Binance REST error: ${res.status}`);
+        }
+        const payload = (await res.json()) as BinanceRestKline[];
+        const latest = payload.map(restKlineToPoint);
+        if (isDisposed || requestIdRef.current !== requestId) {
+          return;
+        }
+        setCandles((prev) => {
+          const merged = mergeLatestCandles(prev, latest);
+          candlesRef.current = merged;
+          return merged;
+        });
+        setError(null);
+      } catch (err) {
+        if (isDisposed || requestIdRef.current !== requestId) {
+          return;
+        }
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
+        if (candlesRef.current.length === 0) {
+          setError(err instanceof Error ? err.message : "刷新 K 线失败");
+        }
+      } finally {
+        isRefreshing = false;
+        controller = null;
+      }
+    }
+
+    const refreshTimer = window.setInterval(refreshLatestCandles, 15000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshLatestCandles();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      isDisposed = true;
+      controller?.abort();
+      window.clearInterval(refreshTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [interval, symbol]);
 

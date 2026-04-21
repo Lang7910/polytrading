@@ -14,6 +14,94 @@ import { asDirectionalPredictions, asPriceTargetPredictions } from "@/lib/polyma
 import { calcPredictionSentiment } from "@/lib/prediction-sentiment";
 import type { Asset, ChartIndicators, DirectionalPrediction, PolymarketContract, Timeframe } from "@/lib/types";
 
+const SETTINGS_STORAGE_KEY = "polytrading.terminal-settings.v1";
+
+const DEFAULT_INDICATORS: ChartIndicators = {
+  ma: { enabled: true, type: "sma", period: 20 },
+  ema: { enabled: true, period: 50 },
+  boll: { enabled: false, period: 20, stdDev: 2 },
+  rsi: { enabled: false, period: 14 },
+  macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
+  dfma: { enabled: false },
+};
+
+const DEFAULT_PREDICTION_VISIBILITY: PredictionLayerVisibility = {
+  directional: true,
+  aboveBelow: true,
+  range: true,
+  hit: true,
+};
+
+const DEFAULT_SESSION_VISIBILITY: MarketSessionVisibility = {
+  nasdaq: true,
+  london: false,
+  tokyo: false,
+  hongKong: false,
+};
+
+interface StoredTerminalSettings {
+  asset?: Asset;
+  timeframe?: Timeframe;
+  indicators?: ChartIndicators;
+  predictionVisibility?: PredictionLayerVisibility;
+  sessionVisibility?: MarketSessionVisibility;
+}
+
+function readStoredSettings(): StoredTerminalSettings {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as StoredTerminalSettings) : {};
+  } catch {
+    return {};
+  }
+}
+
+function isAsset(value: unknown): value is Asset {
+  return typeof value === "string" && ASSETS.includes(value as Asset);
+}
+
+function isTimeframe(value: unknown): value is Timeframe {
+  return typeof value === "string" && TIMEFRAMES.includes(value as Timeframe);
+}
+
+function clampPeriod(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(200, Math.max(2, parsed)) : fallback;
+}
+
+function mergeStoredIndicators(value: StoredTerminalSettings["indicators"]): ChartIndicators {
+  return {
+    ma: {
+      enabled: value?.ma?.enabled ?? DEFAULT_INDICATORS.ma.enabled,
+      type: value?.ma?.type ?? DEFAULT_INDICATORS.ma.type,
+      period: clampPeriod(value?.ma?.period, DEFAULT_INDICATORS.ma.period),
+    },
+    ema: {
+      enabled: value?.ema?.enabled ?? DEFAULT_INDICATORS.ema.enabled,
+      period: clampPeriod(value?.ema?.period, DEFAULT_INDICATORS.ema.period),
+    },
+    boll: {
+      enabled: value?.boll?.enabled ?? DEFAULT_INDICATORS.boll.enabled,
+      period: clampPeriod(value?.boll?.period, DEFAULT_INDICATORS.boll.period),
+      stdDev: Number.isFinite(Number(value?.boll?.stdDev)) ? Number(value?.boll?.stdDev) : DEFAULT_INDICATORS.boll.stdDev,
+    },
+    rsi: {
+      enabled: value?.rsi?.enabled ?? DEFAULT_INDICATORS.rsi.enabled,
+      period: clampPeriod(value?.rsi?.period, DEFAULT_INDICATORS.rsi.period),
+    },
+    macd: {
+      enabled: value?.macd?.enabled ?? DEFAULT_INDICATORS.macd.enabled,
+      fast: clampPeriod(value?.macd?.fast, DEFAULT_INDICATORS.macd.fast),
+      slow: clampPeriod(value?.macd?.slow, DEFAULT_INDICATORS.macd.slow),
+      signal: clampPeriod(value?.macd?.signal, DEFAULT_INDICATORS.macd.signal),
+    },
+    dfma: {
+      enabled: value?.dfma?.enabled ?? DEFAULT_INDICATORS.dfma.enabled,
+    },
+  };
+}
+
 function toDirectionalPrediction(
   market: PolymarketContract,
   timeframe: DirectionalPrediction["timeframe"],
@@ -38,6 +126,10 @@ function toDirectionalPrediction(
 
 function formatSignedPct(value: number) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatTitlePrice(value: number) {
+  return value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 2 : 4 });
 }
 
 const SESSION_KEYS: MarketSessionKey[] = ["nasdaq", "london", "tokyo", "hongKong"];
@@ -68,26 +160,11 @@ function ToolbarMenu({
 export function TradingTerminal() {
   const [asset, setAsset] = useState<Asset>("BTC");
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
-  const [indicators, setIndicators] = useState<ChartIndicators>({
-    ma: { enabled: true, type: "sma", period: 20 },
-    ema: { enabled: true, period: 50 },
-    boll: { enabled: false, period: 20, stdDev: 2 },
-    rsi: { enabled: false, period: 14 },
-    macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
-    dfma: { enabled: false },
-  });
-  const [predictionVisibility, setPredictionVisibility] = useState<PredictionLayerVisibility>({
-    directional: true,
-    aboveBelow: true,
-    range: true,
-    hit: true,
-  });
-  const [sessionVisibility, setSessionVisibility] = useState<MarketSessionVisibility>({
-    nasdaq: true,
-    london: false,
-    tokyo: false,
-    hongKong: false,
-  });
+  const [indicators, setIndicators] = useState<ChartIndicators>(DEFAULT_INDICATORS);
+  const [predictionVisibility, setPredictionVisibility] =
+    useState<PredictionLayerVisibility>(DEFAULT_PREDICTION_VISIBILITY);
+  const [sessionVisibility, setSessionVisibility] = useState<MarketSessionVisibility>(DEFAULT_SESSION_VISIBILITY);
+  const [hasLoadedStoredSettings, setHasLoadedStoredSettings] = useState(false);
   const [isSentimentCollapsed, setIsSentimentCollapsed] = useState(false);
   const [collapsedSessionStats, setCollapsedSessionStats] = useState<Record<MarketSessionKey, boolean>>({
     nasdaq: false,
@@ -95,11 +172,39 @@ export function TradingTerminal() {
     tokyo: false,
     hongKong: false,
   });
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(0);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 15000);
-    return () => window.clearInterval(timer);
+    const updateNow = () => setNowMs(Date.now());
+    const initialTimer = window.setTimeout(updateNow, 0);
+    const timer = window.setInterval(updateNow, 15000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const storedSettings = readStoredSettings();
+      if (isAsset(storedSettings.asset)) {
+        setAsset(storedSettings.asset);
+      }
+      if (isTimeframe(storedSettings.timeframe)) {
+        setTimeframe(storedSettings.timeframe);
+      }
+      setIndicators(mergeStoredIndicators(storedSettings.indicators));
+      setPredictionVisibility({
+        ...DEFAULT_PREDICTION_VISIBILITY,
+        ...storedSettings.predictionVisibility,
+      });
+      setSessionVisibility({
+        ...DEFAULT_SESSION_VISIBILITY,
+        ...storedSettings.sessionVisibility,
+      });
+      setHasLoadedStoredSettings(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const { candles, isLoading: isKlineLoading, error, markPrice } = useBinanceKline(asset, timeframe);
@@ -109,6 +214,43 @@ export function TradingTerminal() {
   const h4 = useContinuousMarket(asset, "4h");
   const d1 = useContinuousMarket(asset, "1d");
   const { markets: gammaMarkets, allMarkets: allGammaMarkets, diagnostics } = usePolymarketDashboard(asset, timeframe, markPrice);
+
+  useEffect(() => {
+    if (!hasLoadedStoredSettings) return;
+    try {
+      window.localStorage.setItem(
+        SETTINGS_STORAGE_KEY,
+        JSON.stringify({
+          asset,
+          timeframe,
+          indicators,
+          predictionVisibility,
+          sessionVisibility,
+        } satisfies StoredTerminalSettings),
+      );
+    } catch {
+      // Ignore storage failures in private mode or constrained browsers.
+    }
+  }, [asset, hasLoadedStoredSettings, indicators, predictionVisibility, sessionVisibility, timeframe]);
+
+  useEffect(() => {
+    const title = markPrice
+      ? `${asset}/USDT ${formatTitlePrice(markPrice)} | PolyTrading`
+      : `${asset}/USDT | PolyTrading`;
+    const applyTitle = () => {
+      if (document.title !== title) {
+        document.title = title;
+      }
+    };
+
+    applyTitle();
+    const retryTimers = [100, 500, 1500].map((delay) => window.setTimeout(applyTitle, delay));
+    const keepTitleTimer = window.setInterval(applyTitle, 5000);
+    return () => {
+      retryTimers.forEach((timer) => window.clearTimeout(timer));
+      window.clearInterval(keepTitleTimer);
+    };
+  }, [asset, markPrice]);
 
   const markets = useMemo(() => {
     const byKey = new Map<string, PolymarketContract>();
@@ -489,6 +631,7 @@ export function TradingTerminal() {
               indicators={indicators}
               visibility={predictionVisibility}
               sessions={sessionVisibility}
+              chartStateKey={`${asset}-${timeframe}`}
             />
             <div className="pointer-events-none absolute left-4 top-4 w-56 rounded-lg border border-emerald-500/30 bg-black/60 p-3 backdrop-blur">
               <div className="mb-2 text-xs text-zinc-400">短线预测</div>

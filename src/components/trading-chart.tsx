@@ -14,6 +14,7 @@ import {
   type IPriceLine,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
+  type LogicalRange,
   type SeriesMarker,
   type Time,
   type UTCTimestamp,
@@ -37,6 +38,7 @@ interface TradingChartProps {
   indicators: ChartIndicators;
   visibility: PredictionLayerVisibility;
   sessions: MarketSessionVisibility;
+  chartStateKey: string;
 }
 
 interface ChartTargetLine {
@@ -46,6 +48,28 @@ interface ChartTargetLine {
   title: string;
   lineStyle: LineStyle;
   lineWidth: 1 | 2 | 3 | 4;
+}
+
+const CHART_RANGE_STORAGE_PREFIX = "polytrading.chart-visible-range.v1:";
+
+function readStoredLogicalRange(chartStateKey: string): LogicalRange | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(`${CHART_RANGE_STORAGE_PREFIX}${chartStateKey}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LogicalRange>;
+    return typeof parsed.from === "number" && typeof parsed.to === "number" ? { from: parsed.from, to: parsed.to } : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredLogicalRange(chartStateKey: string, range: LogicalRange) {
+  try {
+    window.localStorage.setItem(`${CHART_RANGE_STORAGE_PREFIX}${chartStateKey}`, JSON.stringify(range));
+  } catch {
+    // Ignore storage failures in private mode or constrained browsers.
+  }
 }
 
 function formatDirectionalMarker(label: string, value: number, directional: DirectionalPrediction) {
@@ -134,7 +158,15 @@ function toChartTargetLines(target: PriceTargetPrediction): ChartTargetLine[] {
   ];
 }
 
-export function TradingChart({ candles, targets, directional, indicators, visibility, sessions }: TradingChartProps) {
+export function TradingChart({
+  candles,
+  targets,
+  directional,
+  indicators,
+  visibility,
+  sessions,
+  chartStateKey,
+}: TradingChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
@@ -157,6 +189,7 @@ export function TradingChart({ candles, targets, directional, indicators, visibi
   const firstCandleRef = useRef<Time | null>(null);
   const lastCandleRef = useRef<Time | null>(null);
   const candleCountRef = useRef<number>(0);
+  const activeChartStateKeyRef = useRef(chartStateKey);
 
   const candleData = useMemo<CandlestickData<UTCTimestamp>[]>(
     () =>
@@ -333,6 +366,23 @@ export function TradingChart({ candles, targets, directional, indicators, visibi
   }, []);
 
   useEffect(() => {
+    activeChartStateKeyRef.current = chartStateKey;
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const handleRangeChange = (range: LogicalRange | null) => {
+      if (range) {
+        writeStoredLogicalRange(activeChartStateKeyRef.current, range);
+      }
+    };
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleRangeChange);
+    return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleRangeChange);
+    };
+  }, [chartStateKey]);
+
+  useEffect(() => {
     if (!seriesRef.current) return;
     if (candleData.length === 0) {
       seriesRef.current.setData([]);
@@ -352,19 +402,20 @@ export function TradingChart({ candles, targets, directional, indicators, visibi
 
     if (didResetData) {
       seriesRef.current.setData(candleData);
-      chartRef.current?.timeScale().fitContent();
-    } else if (
-      lastCandleRef.current === null ||
-      lastCandleRef.current !== lastTime ||
-      candleData.length !== candleCountRef.current
-    ) {
+      const storedRange = readStoredLogicalRange(chartStateKey);
+      if (storedRange) {
+        chartRef.current?.timeScale().setVisibleLogicalRange(storedRange);
+      } else {
+        chartRef.current?.timeScale().fitContent();
+      }
+    } else {
       seriesRef.current.update(last);
     }
 
     firstCandleRef.current = first;
     lastCandleRef.current = lastTime;
     candleCountRef.current = candleData.length;
-  }, [candleData]);
+  }, [candleData, chartStateKey]);
 
   useEffect(() => {
     if (
