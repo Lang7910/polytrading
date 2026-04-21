@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
+#!/bin/sh
+set -eu
 
 APP_NAME="${APP_NAME:-polytrading-web}"
 IMAGE_NAME="${IMAGE_NAME:-polytrading-web}"
@@ -12,7 +12,7 @@ NEXT_PUBLIC_ENABLE_GAMMA="${NEXT_PUBLIC_ENABLE_GAMMA:-true}"
 NEXT_PUBLIC_POLYMARKET_GAMMA_URL="${NEXT_PUBLIC_POLYMARKET_GAMMA_URL:-https://gamma-api.polymarket.com}"
 NEXT_PUBLIC_POLYMARKET_WS_URL="${NEXT_PUBLIC_POLYMARKET_WS_URL:-wss://ws-subscriptions-clob.polymarket.com/ws/market}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
 APP_DIR="$SCRIPT_DIR"
 FULL_IMAGE="$IMAGE_NAME:$IMAGE_TAG"
 
