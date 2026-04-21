@@ -1,7 +1,7 @@
 "use client";
 
 import { CandlestickChart, Search, SlidersHorizontal } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { MarketCard } from "@/components/market-card";
 import { TradingChart, type PredictionLayerVisibility } from "@/components/trading-chart";
@@ -41,6 +41,29 @@ function formatSignedPct(value: number) {
 }
 
 const SESSION_KEYS: MarketSessionKey[] = ["nasdaq", "london", "tokyo", "hongKong"];
+
+function ToolbarMenu({
+  label,
+  activeCount,
+  children,
+}: {
+  label: string;
+  activeCount?: number;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group relative">
+      <summary className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-md bg-zinc-900 px-3 text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 [&::-webkit-details-marker]:hidden">
+        <span>{label}</span>
+        {activeCount !== undefined && <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-300">{activeCount}</span>}
+        <span className="text-zinc-500 transition-transform group-open:rotate-180">⌄</span>
+      </summary>
+      <div className="absolute left-0 top-10 z-40 min-w-52 rounded-md border border-zinc-800 bg-zinc-950 p-2 shadow-xl shadow-black/40">
+        {children}
+      </div>
+    </details>
+  );
+}
 
 export function TradingTerminal() {
   const [asset, setAsset] = useState<Asset>("BTC");
@@ -133,6 +156,20 @@ export function TradingTerminal() {
     }),
     [targetPredictions],
   );
+  const activeAverageCount = [indicators.ma.enabled, indicators.ema.enabled].filter(Boolean).length;
+  const activeIndicatorCount = [
+    indicators.boll.enabled,
+    indicators.rsi.enabled,
+    indicators.macd.enabled,
+    indicators.dfma.enabled,
+  ].filter(Boolean).length;
+  const activePredictionLayerCount = [
+    predictionVisibility.directional,
+    targetTypeAvailability.aboveBelow && predictionVisibility.aboveBelow,
+    targetTypeAvailability.range && predictionVisibility.range,
+    targetTypeAvailability.hit && predictionVisibility.hit,
+  ].filter(Boolean).length;
+  const activeSessionCount = SESSION_KEYS.filter((key) => sessionVisibility[key]).length;
   const directionalPredictions = useMemo(
     () => asDirectionalPredictions(markets.filter((item) => item.source === "real")),
     [markets],
@@ -250,176 +287,195 @@ export function TradingTerminal() {
 
       <div className="flex flex-1 min-h-0">
         <main className="flex min-w-0 flex-1 flex-col p-4">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            {TIMEFRAMES.map((item) => (
-              <Button
-                key={item}
-                size="sm"
-                variant={item === timeframe ? "green" : "ghost"}
-                onClick={() => setTimeframe(item)}
+          <div className="mb-4 flex items-center gap-2">
+            <label className="flex h-8 items-center gap-2 rounded-md bg-zinc-900 px-2 text-xs text-zinc-400">
+              周期
+              <select
+                className="bg-transparent text-zinc-100 outline-none"
+                value={timeframe}
+                onChange={(event) => setTimeframe(event.target.value as Timeframe)}
               >
-                {item}
-              </Button>
-            ))}
-            <div className="h-5 w-px bg-zinc-800" />
-            <Button
-              size="sm"
-              variant={indicators.ma.enabled ? "green" : "ghost"}
-              onClick={() => setIndicators((prev) => ({ ...prev, ma: { ...prev.ma, enabled: !prev.ma.enabled } }))}
-            >
-              MA
-            </Button>
-            <Button
-              size="sm"
-              variant={indicators.ema.enabled ? "green" : "ghost"}
-              onClick={() => setIndicators((prev) => ({ ...prev, ema: { ...prev.ema, enabled: !prev.ema.enabled } }))}
-            >
-              EMA
-            </Button>
-            <Button
-              size="sm"
-              variant={indicators.boll.enabled ? "green" : "ghost"}
-              onClick={() => setIndicators((prev) => ({ ...prev, boll: { ...prev.boll, enabled: !prev.boll.enabled } }))}
-            >
-              BOLL
-            </Button>
-            <Button
-              size="sm"
-              variant={indicators.rsi.enabled ? "green" : "ghost"}
-              onClick={() => setIndicators((prev) => ({ ...prev, rsi: { ...prev.rsi, enabled: !prev.rsi.enabled } }))}
-            >
-              RSI
-            </Button>
-            <Button
-              size="sm"
-              variant={indicators.macd.enabled ? "green" : "ghost"}
-              onClick={() => setIndicators((prev) => ({ ...prev, macd: { ...prev.macd, enabled: !prev.macd.enabled } }))}
-            >
-              MACD
-            </Button>
-            <Button
-              size="sm"
-              variant={indicators.dfma.enabled ? "green" : "ghost"}
-              onClick={() => setIndicators((prev) => ({ ...prev, dfma: { enabled: !prev.dfma.enabled } }))}
-            >
-              DFMA
-            </Button>
-            <div className="h-5 w-px bg-zinc-800" />
-            <Button
-              size="sm"
-              variant={predictionVisibility.directional ? "green" : "ghost"}
-              onClick={() =>
-                setPredictionVisibility((prev) => ({ ...prev, directional: !prev.directional }))
-              }
-            >
-              涨跌
-            </Button>
-            <Button
-              size="sm"
-              variant={targetTypeAvailability.aboveBelow && predictionVisibility.aboveBelow ? "green" : "ghost"}
-              disabled={!targetTypeAvailability.aboveBelow}
-              onClick={() =>
-                setPredictionVisibility((prev) => ({ ...prev, aboveBelow: !prev.aboveBelow }))
-              }
-            >
-              高于/低于
-            </Button>
-            <Button
-              size="sm"
-              variant={targetTypeAvailability.range && predictionVisibility.range ? "green" : "ghost"}
-              disabled={!targetTypeAvailability.range}
-              onClick={() =>
-                setPredictionVisibility((prev) => ({ ...prev, range: !prev.range }))
-              }
-            >
-              区间
-            </Button>
-            <Button
-              size="sm"
-              variant={targetTypeAvailability.hit && predictionVisibility.hit ? "green" : "ghost"}
-              disabled={!targetTypeAvailability.hit}
-              onClick={() =>
-                setPredictionVisibility((prev) => ({ ...prev, hit: !prev.hit }))
-              }
-            >
-              触及
-            </Button>
-            <div className="h-5 w-px bg-zinc-800" />
-            <Button
-              size="sm"
-              variant={sessionVisibility.nasdaq ? "green" : "ghost"}
-              onClick={() => setSessionVisibility((prev) => ({ ...prev, nasdaq: !prev.nasdaq }))}
-            >
-              NASDAQ
-            </Button>
-            <Button
-              size="sm"
-              variant={sessionVisibility.london ? "green" : "ghost"}
-              onClick={() => setSessionVisibility((prev) => ({ ...prev, london: !prev.london }))}
-            >
-              London
-            </Button>
-            <Button
-              size="sm"
-              variant={sessionVisibility.tokyo ? "green" : "ghost"}
-              onClick={() => setSessionVisibility((prev) => ({ ...prev, tokyo: !prev.tokyo }))}
-            >
-              Tokyo
-            </Button>
-            <Button
-              size="sm"
-              variant={sessionVisibility.hongKong ? "green" : "ghost"}
-              onClick={() => setSessionVisibility((prev) => ({ ...prev, hongKong: !prev.hongKong }))}
-            >
-              HK
-            </Button>
-            <select
-              className="h-8 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-xs text-zinc-200"
-              value={indicators.ma.type}
-              onChange={(event) =>
-                setIndicators((prev) => ({
-                  ...prev,
-                  ma: { ...prev.ma, type: event.target.value as ChartIndicators["ma"]["type"] },
-                }))
-              }
-            >
-              <option value="sma">SMA</option>
-              <option value="ema">EMA</option>
-              <option value="wma">WMA</option>
-              <option value="hma">HMA</option>
-            </select>
-            <label className="flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-xs text-zinc-400">
-              MA
-              <input
-                type="number"
-                min={2}
-                max={200}
-                value={indicators.ma.period}
-                onChange={(event) =>
-                  setIndicators((prev) => ({
-                    ...prev,
-                    ma: { ...prev.ma, period: Math.min(200, Math.max(2, Number(event.target.value) || 20)) },
-                  }))
-                }
-                className="w-12 bg-transparent text-zinc-100 outline-none"
-              />
+                {TIMEFRAMES.map((item) => (
+                  <option key={item} value={item} className="bg-zinc-950 text-zinc-100">
+                    {item}
+                  </option>
+                ))}
+              </select>
             </label>
-            <label className="flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-xs text-zinc-400">
-              EMA
-              <input
-                type="number"
-                min={2}
-                max={200}
-                value={indicators.ema.period}
-                onChange={(event) =>
-                  setIndicators((prev) => ({
-                    ...prev,
-                    ema: { ...prev.ema, period: Math.min(200, Math.max(2, Number(event.target.value) || 50)) },
-                  }))
-                }
-                className="w-12 bg-transparent text-zinc-100 outline-none"
-              />
-            </label>
+
+            <ToolbarMenu label="均线" activeCount={activeAverageCount}>
+              <div className="space-y-2 text-xs">
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    variant={indicators.ma.enabled ? "green" : "ghost"}
+                    onClick={() => setIndicators((prev) => ({ ...prev, ma: { ...prev.ma, enabled: !prev.ma.enabled } }))}
+                  >
+                    MA
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={indicators.ema.enabled ? "green" : "ghost"}
+                    onClick={() => setIndicators((prev) => ({ ...prev, ema: { ...prev.ema, enabled: !prev.ema.enabled } }))}
+                  >
+                    EMA
+                  </Button>
+                </div>
+                <label className="flex items-center justify-between gap-3 rounded-md bg-zinc-900 px-2 py-1.5 text-zinc-400">
+                  MA 类型
+                  <select
+                    className="w-24 bg-transparent text-zinc-100 outline-none"
+                    value={indicators.ma.type}
+                    onChange={(event) =>
+                      setIndicators((prev) => ({
+                        ...prev,
+                        ma: { ...prev.ma, type: event.target.value as ChartIndicators["ma"]["type"] },
+                      }))
+                    }
+                  >
+                    <option value="sma" className="bg-zinc-950 text-zinc-100">SMA</option>
+                    <option value="ema" className="bg-zinc-950 text-zinc-100">EMA</option>
+                    <option value="wma" className="bg-zinc-950 text-zinc-100">WMA</option>
+                    <option value="hma" className="bg-zinc-950 text-zinc-100">HMA</option>
+                  </select>
+                </label>
+                <label className="flex items-center justify-between gap-3 rounded-md bg-zinc-900 px-2 py-1.5 text-zinc-400">
+                  MA 周期
+                  <input
+                    type="number"
+                    min={2}
+                    max={200}
+                    value={indicators.ma.period}
+                    onChange={(event) =>
+                      setIndicators((prev) => ({
+                        ...prev,
+                        ma: { ...prev.ma, period: Math.min(200, Math.max(2, Number(event.target.value) || 20)) },
+                      }))
+                    }
+                    className="w-24 bg-transparent text-right text-zinc-100 outline-none"
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 rounded-md bg-zinc-900 px-2 py-1.5 text-zinc-400">
+                  EMA 周期
+                  <input
+                    type="number"
+                    min={2}
+                    max={200}
+                    value={indicators.ema.period}
+                    onChange={(event) =>
+                      setIndicators((prev) => ({
+                        ...prev,
+                        ema: { ...prev.ema, period: Math.min(200, Math.max(2, Number(event.target.value) || 50)) },
+                      }))
+                    }
+                    className="w-24 bg-transparent text-right text-zinc-100 outline-none"
+                  />
+                </label>
+              </div>
+            </ToolbarMenu>
+
+            <ToolbarMenu label="指标" activeCount={activeIndicatorCount}>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  size="sm"
+                  variant={indicators.boll.enabled ? "green" : "ghost"}
+                  onClick={() => setIndicators((prev) => ({ ...prev, boll: { ...prev.boll, enabled: !prev.boll.enabled } }))}
+                >
+                  BOLL
+                </Button>
+                <Button
+                  size="sm"
+                  variant={indicators.rsi.enabled ? "green" : "ghost"}
+                  onClick={() => setIndicators((prev) => ({ ...prev, rsi: { ...prev.rsi, enabled: !prev.rsi.enabled } }))}
+                >
+                  RSI
+                </Button>
+                <Button
+                  size="sm"
+                  variant={indicators.macd.enabled ? "green" : "ghost"}
+                  onClick={() => setIndicators((prev) => ({ ...prev, macd: { ...prev.macd, enabled: !prev.macd.enabled } }))}
+                >
+                  MACD
+                </Button>
+                <Button
+                  size="sm"
+                  variant={indicators.dfma.enabled ? "green" : "ghost"}
+                  onClick={() => setIndicators((prev) => ({ ...prev, dfma: { enabled: !prev.dfma.enabled } }))}
+                >
+                  DFMA
+                </Button>
+              </div>
+            </ToolbarMenu>
+
+            <ToolbarMenu label="预测" activeCount={activePredictionLayerCount}>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  size="sm"
+                  variant={predictionVisibility.directional ? "green" : "ghost"}
+                  onClick={() => setPredictionVisibility((prev) => ({ ...prev, directional: !prev.directional }))}
+                >
+                  涨跌
+                </Button>
+                <Button
+                  size="sm"
+                  variant={targetTypeAvailability.aboveBelow && predictionVisibility.aboveBelow ? "green" : "ghost"}
+                  disabled={!targetTypeAvailability.aboveBelow}
+                  onClick={() => setPredictionVisibility((prev) => ({ ...prev, aboveBelow: !prev.aboveBelow }))}
+                >
+                  高于/低于
+                </Button>
+                <Button
+                  size="sm"
+                  variant={targetTypeAvailability.range && predictionVisibility.range ? "green" : "ghost"}
+                  disabled={!targetTypeAvailability.range}
+                  onClick={() => setPredictionVisibility((prev) => ({ ...prev, range: !prev.range }))}
+                >
+                  区间
+                </Button>
+                <Button
+                  size="sm"
+                  variant={targetTypeAvailability.hit && predictionVisibility.hit ? "green" : "ghost"}
+                  disabled={!targetTypeAvailability.hit}
+                  onClick={() => setPredictionVisibility((prev) => ({ ...prev, hit: !prev.hit }))}
+                >
+                  触及
+                </Button>
+              </div>
+            </ToolbarMenu>
+
+            <ToolbarMenu label="时段" activeCount={activeSessionCount}>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  size="sm"
+                  variant={sessionVisibility.nasdaq ? "green" : "ghost"}
+                  onClick={() => setSessionVisibility((prev) => ({ ...prev, nasdaq: !prev.nasdaq }))}
+                >
+                  NASDAQ
+                </Button>
+                <Button
+                  size="sm"
+                  variant={sessionVisibility.london ? "green" : "ghost"}
+                  onClick={() => setSessionVisibility((prev) => ({ ...prev, london: !prev.london }))}
+                >
+                  London
+                </Button>
+                <Button
+                  size="sm"
+                  variant={sessionVisibility.tokyo ? "green" : "ghost"}
+                  onClick={() => setSessionVisibility((prev) => ({ ...prev, tokyo: !prev.tokyo }))}
+                >
+                  Tokyo
+                </Button>
+                <Button
+                  size="sm"
+                  variant={sessionVisibility.hongKong ? "green" : "ghost"}
+                  onClick={() => setSessionVisibility((prev) => ({ ...prev, hongKong: !prev.hongKong }))}
+                >
+                  HK
+                </Button>
+              </div>
+            </ToolbarMenu>
+
             <div className="ml-auto rounded-md border border-zinc-800 bg-zinc-900 px-3 py-1 text-xs">
               {markPrice ? `当前价 ${markPrice.toLocaleString()}` : "等待行情..."}
             </div>
