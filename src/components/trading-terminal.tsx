@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { MarketCard } from "@/components/market-card";
 import { TradingChart, type PredictionLayerVisibility } from "@/components/trading-chart";
 import { useBinanceKline } from "@/hooks/use-binance-kline";
+import { useBinanceSessionHistory } from "@/hooks/use-binance-session-history";
 import { useContinuousMarket } from "@/hooks/use-continuous-market";
 import { usePolymarketDashboard } from "@/hooks/use-polymarket-dashboard";
 import { ASSETS, TIMEFRAMES } from "@/lib/constants";
@@ -208,6 +209,8 @@ export function TradingTerminal() {
   }, []);
 
   const { candles, isLoading: isKlineLoading, error, markPrice } = useBinanceKline(asset, timeframe);
+  const { candles: sessionCandles, isLoading: isSessionHistoryLoading, error: sessionHistoryError } =
+    useBinanceSessionHistory(asset);
   const m5 = useContinuousMarket(asset, "5m");
   const m15 = useContinuousMarket(asset, "15m");
   const h1 = useContinuousMarket(asset, "1h");
@@ -327,8 +330,11 @@ export function TradingTerminal() {
     [directionalPredictions, markPrice, targetPredictions, targetSourceMarkets],
   );
   const sessionStatsList = useMemo(
-    () => SESSION_KEYS.filter((key) => sessionVisibility[key]).map((key) => calcMarketSessionStats(candles, key, 6)),
-    [candles, sessionVisibility],
+    () =>
+      SESSION_KEYS.filter((key) => sessionVisibility[key]).map((key) =>
+        calcMarketSessionStats(sessionCandles, key, 6),
+      ),
+    [sessionCandles, sessionVisibility],
   );
   const selectedDirectional = useMemo<DirectionalPrediction | null>(() => {
     const map = new Map<DirectionalPrediction["timeframe"], DirectionalPrediction>();
@@ -397,8 +403,8 @@ export function TradingTerminal() {
   }, [diagnostics]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#0a0a0a] text-zinc-300">
-      <header className="sticky top-0 z-30 flex h-[60px] items-center justify-between border-b border-zinc-800 bg-[#121212] px-6">
+    <div className="flex h-screen flex-col overflow-hidden bg-[#0a0a0a] text-zinc-300">
+      <header className="z-30 flex h-[60px] shrink-0 items-center justify-between border-b border-zinc-800 bg-[#121212] px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400">
             <CandlestickChart className="h-4 w-4" />
@@ -427,9 +433,9 @@ export function TradingTerminal() {
         </div>
       </header>
 
-      <div className="flex flex-1 min-h-0">
-        <main className="flex min-w-0 flex-1 flex-col p-4">
-          <div className="mb-4 flex items-center gap-2">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4">
+          <div className="mb-4 flex shrink-0 items-center gap-2">
             <label className="flex h-8 items-center gap-2 rounded-md bg-zinc-900 px-2 text-xs text-zinc-400">
               周期
               <select
@@ -623,7 +629,7 @@ export function TradingTerminal() {
             </div>
           </div>
 
-          <div className="relative">
+          <div className="relative min-h-0 flex-1">
             <TradingChart
               candles={candles}
               targets={visibleTargetPredictions}
@@ -688,7 +694,7 @@ export function TradingTerminal() {
           </div>
         </main>
 
-        <aside className="hidden h-[calc(100vh-60px)] w-[380px] shrink-0 border-l border-zinc-800 bg-[#101010] p-4 xl:block">
+        <aside className="hidden h-full w-[380px] shrink-0 overflow-y-auto border-l border-zinc-800 bg-[#101010] p-4 xl:block">
           <div className="mb-3 flex items-center justify-between">
             <div className="text-sm font-semibold text-zinc-100">预测市场</div>
             <div className="text-xs text-zinc-500">按 {timeframe} 优先排序</div>
@@ -761,6 +767,13 @@ export function TradingTerminal() {
               </>
             )}
           </div>
+          {activeSessionCount > 0 && (isSessionHistoryLoading || sessionHistoryError) && (
+            <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs text-zinc-500">
+              {sessionHistoryError
+                ? `时段统计历史 K 线异常：${sessionHistoryError}`
+                : "正在加载独立 15m 历史 K 线用于时段统计"}
+            </div>
+          )}
           {sessionStatsList.length === 0 ? (
             <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs text-zinc-500">
               开启至少一个市场时段后显示统计
@@ -833,7 +846,7 @@ export function TradingTerminal() {
                       </div>
                       <div className="space-y-1 text-[11px]">
                         {sessionStats.recent.length === 0 ? (
-                          <div className="text-zinc-500">当前 K 线范围内没有完整开收盘样本</div>
+                          <div className="text-zinc-500">独立 15m 历史中没有完整开收盘样本</div>
                         ) : (
                           sessionStats.recent.map((move) => (
                             <div
@@ -862,7 +875,7 @@ export function TradingTerminal() {
           )}
           {error && <div className="mb-3 rounded border border-red-900/50 bg-red-950/20 p-3 text-sm text-red-300">{error}</div>}
 
-          <div className="h-[calc(100%-80px)] space-y-3 overflow-y-auto pr-1">
+          <div className="space-y-3 pr-1 pb-4">
             {followupDirectional.length > 0 && (
               <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
                 <div className="mb-2 text-xs font-medium text-zinc-300">后续时段</div>

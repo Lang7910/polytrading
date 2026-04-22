@@ -627,7 +627,7 @@ export function TradingChart({
     visibility.hit && targets.some((target) => !target.priceTargetType || target.priceTargetType === "generic");
 
   return (
-    <div className="relative h-[calc(100vh-140px)] min-h-[420px] w-full rounded-xl border border-zinc-800 bg-[#0a0f14]">
+    <div className="relative h-full min-h-0 w-full rounded-xl border border-zinc-800 bg-[#0a0f14]">
       <div ref={containerRef} className="h-full w-full" />
       {(hasAboveBelowTargets || hasRangeTargets || hasHitTargets || hasGenericTargets) && (
         <div className="pointer-events-none absolute bottom-3 right-3 flex flex-wrap gap-2 rounded-md border border-zinc-800/80 bg-black/60 px-3 py-2 text-[11px] text-zinc-300 backdrop-blur">

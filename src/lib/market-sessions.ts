@@ -153,6 +153,28 @@ function findCandleForTime(candles: KlinePoint[], targetMs: number, durationSeco
   return candles.find((candle) => targetSeconds >= candle.time && targetSeconds < candle.time + durationSeconds);
 }
 
+function findBoundaryPrice(candles: KlinePoint[], targetMs: number, durationSeconds: number) {
+  const targetSeconds = Math.floor(targetMs / 1000);
+  const exact = candles.find((candle) => candle.time === targetSeconds);
+  if (exact) {
+    return { time: exact.time, price: exact.open };
+  }
+
+  let previous: KlinePoint | null = null;
+  for (const candle of candles) {
+    if (candle.time + durationSeconds <= targetSeconds) {
+      previous = candle;
+      continue;
+    }
+    break;
+  }
+  if (previous) {
+    return { time: previous.time + durationSeconds, price: previous.close };
+  }
+
+  return null;
+}
+
 function sessionMoves(
   candles: KlinePoint[],
   sessionKey: MarketSessionKey,
@@ -173,20 +195,20 @@ function sessionMoves(
 
     const openMs = localDateTimeToUtcMs(session.timezone, dayMs, session.open.hour, session.open.minute);
     const closeMs = localDateTimeToUtcMs(session.timezone, dayMs, session.close.hour, session.close.minute);
-    const openCandle = findCandleForTime(candles, openMs, durationSeconds);
-    const closeCandle = findCandleForTime(candles, closeMs, durationSeconds);
-    if (!openCandle || !closeCandle || openCandle.time >= closeCandle.time) continue;
+    const openBoundary = findBoundaryPrice(candles, openMs, durationSeconds);
+    const closeBoundary = findBoundaryPrice(candles, closeMs, durationSeconds);
+    if (!openBoundary || !closeBoundary || openBoundary.time >= closeBoundary.time) continue;
 
-    const changePct = ((closeCandle.close - openCandle.open) / openCandle.open) * 100;
+    const changePct = ((closeBoundary.price - openBoundary.price) / openBoundary.price) * 100;
     moves.push({
       session: sessionKey,
       sessionLabel: session.label,
       dayKey,
       label: dayKey.slice(5),
-      openTime: openCandle.time as UTCTimestamp,
-      closeTime: closeCandle.time as UTCTimestamp,
-      openPrice: openCandle.open,
-      closePrice: closeCandle.close,
+      openTime: openBoundary.time as UTCTimestamp,
+      closeTime: closeBoundary.time as UTCTimestamp,
+      openPrice: openBoundary.price,
+      closePrice: closeBoundary.price,
       changePct,
     });
   }
