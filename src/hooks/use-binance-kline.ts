@@ -52,17 +52,16 @@ export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceK
 
   useEffect(() => {
     let isMounted = true;
-    const controller = new AbortController();
     const requestId = (requestIdRef.current += 1);
 
     async function fetchInitialData() {
       setIsLoading(true);
       setError(null);
-      setCandles([]);
-      candlesRef.current = [];
+        setCandles([]);
+        candlesRef.current = [];
       try {
         const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=1000`;
-        const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) {
           throw new Error(`Binance REST error: ${res.status}`);
         }
@@ -79,9 +78,6 @@ export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceK
         if (!isMounted || requestIdRef.current !== requestId) {
           return;
         }
-        if (err instanceof DOMException && err.name === "AbortError") {
-          return;
-        }
         setError(err instanceof Error ? err.message : "获取 K 线失败");
         setIsLoading(false);
       }
@@ -91,7 +87,6 @@ export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceK
 
     return () => {
       isMounted = false;
-      controller.abort();
     };
   }, [interval, symbol]);
 
@@ -179,16 +174,14 @@ export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceK
   useEffect(() => {
     let isDisposed = false;
     let isRefreshing = false;
-    let controller: AbortController | null = null;
 
     async function refreshLatestCandles() {
       if (isRefreshing) return;
       isRefreshing = true;
       const requestId = requestIdRef.current;
-      controller = new AbortController();
       try {
         const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=2`;
-        const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) {
           throw new Error(`Binance REST error: ${res.status}`);
         }
@@ -207,15 +200,11 @@ export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceK
         if (isDisposed || requestIdRef.current !== requestId) {
           return;
         }
-        if (err instanceof DOMException && err.name === "AbortError") {
-          return;
-        }
         if (candlesRef.current.length === 0) {
           setError(err instanceof Error ? err.message : "刷新 K 线失败");
         }
       } finally {
         isRefreshing = false;
-        controller = null;
       }
     }
 
@@ -229,7 +218,6 @@ export function useBinanceKline(asset: Asset, timeframe: Timeframe): UseBinanceK
 
     return () => {
       isDisposed = true;
-      controller?.abort();
       window.clearInterval(refreshTimer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };

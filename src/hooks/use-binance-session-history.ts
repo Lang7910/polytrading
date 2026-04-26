@@ -46,12 +46,9 @@ export function useBinanceSessionHistory(asset: Asset): UseBinanceSessionHistory
 
   useEffect(() => {
     let isDisposed = false;
-    let controller: AbortController | null = null;
     const requestId = (requestIdRef.current += 1);
 
     async function fetchHistory(isInitial: boolean) {
-      controller?.abort();
-      controller = new AbortController();
       if (isInitial) {
         setIsLoading(true);
         setError(null);
@@ -72,7 +69,6 @@ export function useBinanceSessionHistory(asset: Asset): UseBinanceSessionHistory
           }
 
           const res = await fetch(`https://api.binance.com/api/v3/klines?${params.toString()}`, {
-            signal: controller.signal,
             cache: "no-store",
           });
           if (!res.ok) {
@@ -97,9 +93,6 @@ export function useBinanceSessionHistory(asset: Asset): UseBinanceSessionHistory
         if (isDisposed || requestIdRef.current !== requestId) {
           return;
         }
-        if (err instanceof DOMException && err.name === "AbortError") {
-          return;
-        }
         setError(err instanceof Error ? err.message : "获取时段统计 K 线失败");
         setIsLoading(false);
       }
@@ -110,7 +103,6 @@ export function useBinanceSessionHistory(asset: Asset): UseBinanceSessionHistory
 
     return () => {
       isDisposed = true;
-      controller?.abort();
       window.clearInterval(refreshTimer);
     };
   }, [symbol]);

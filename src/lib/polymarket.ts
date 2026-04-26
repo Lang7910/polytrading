@@ -133,6 +133,9 @@ function inferPriceComparator(text: string): PriceTargetPrediction["comparator"]
   const value = text.toLowerCase();
   if (
     value.includes("↓") ||
+    /\bdip(?:s|ped|ping)?\b/.test(value) ||
+    value.includes("drop to") ||
+    value.includes("fall to") ||
     value.includes("below") ||
     value.includes("less than") ||
     value.includes("under ") ||
@@ -142,6 +145,7 @@ function inferPriceComparator(text: string): PriceTargetPrediction["comparator"]
   }
   if (
     value.includes("↑") ||
+    value.includes("reach") ||
     value.includes("above") ||
     value.includes("greater than") ||
     value.includes("over ") ||
@@ -240,6 +244,20 @@ function inferPriceTargetLevels(market: GammaMarketResponse, asset: Asset) {
   const outcomes = parseArrayField(market.outcomes);
   const prices = parseArrayField(market.outcomePrices).map((item) => Number(item));
   const levels: Array<{ label: string; price: number; yesProbability: number }> = [];
+
+  const groupLabel = market.groupItemTitle?.trim();
+  const groupPrice = groupLabel ? parseNumericLabel(groupLabel) : null;
+  const groupYes = inferDirectionalProbability(market) ?? prices[0] ?? 0.5;
+  if (groupLabel && groupPrice !== null && isPlausibleAssetPrice(asset, groupPrice)) {
+    return [
+      {
+        label: groupLabel,
+        price: groupPrice,
+        yesProbability: clamp(groupYes, 0, 1),
+      },
+    ];
+  }
+
   const len = Math.min(outcomes.length, prices.length);
   for (let i = 0; i < len; i += 1) {
     const label = outcomes[i];
@@ -377,6 +395,10 @@ function mergeTargetProbability(
   }));
 }
 
+function isResolvedCertainty(target: { yesProbability: number }) {
+  return target.yesProbability <= 0.0001 || target.yesProbability >= 0.9999;
+}
+
 function isRelevantTitle(title: string) {
   const value = title.toLowerCase();
   const positiveSignals = [
@@ -480,11 +502,18 @@ export async function fetchGammaContracts(asset: Asset): Promise<PolymarketContr
 }
 
 function formatEndDateLabel(endDate: string) {
-  const date = new Date(endDate);
+  const date = new Date(new Date(endDate).getTime() - 60_000);
   if (Number.isNaN(date.getTime())) {
     return "到期";
   }
-  return `${date.getMonth() + 1}/${date.getDate()}`;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(date);
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return month && day ? `${month}/${day}` : "到期";
 }
 
 export function asPriceTargetPredictions(
@@ -521,14 +550,14 @@ export function asPriceTargetPredictions(
         priceTargetType: contract.priceTargetType,
         comparator:
           inferPriceComparator(level.label) ??
-          (contract.priceTargetType === "above-below" ? inferPriceComparator(contract.title) : undefined),
+          inferPriceComparator(contract.title),
         range: contract.priceTargetType === "range" ? parsePriceRange(level.label) ?? parsePriceRange(contract.title) : null,
         endTime: new Date(contract.endDate).getTime(),
       }));
     })
     .filter((target) => Number.isFinite(target.price) && target.price > 0)
     .filter((target) => target.priceTargetType !== "range" || Boolean(target.range))
-    .filter((target) => target.yesProbability >= 0.01 && target.yesProbability <= 0.99)
+    .filter((target) => !isResolvedCertainty(target))
     .filter((target) => {
       if (!markPrice) return true;
       const distance = Math.abs(target.price - markPrice) / markPrice;
@@ -611,18 +640,33 @@ export function asPriceTargetPredictions(
     .filter((target) => target.priceTargetType === "hit" && !selectedIds.has(target.id))
     .sort((a, b) => {
       if (markPrice) {
-        const aCrossSide = (a.price >= markPrice ? 1 : -1) * (a.comparator === "below" ? -1 : 1) < 0 ? 1 : 0;
-        const bCrossSide = (b.price >= markPrice ? 1 : -1) * (b.comparator === "below" ? -1 : 1) < 0 ? 1 : 0;
-        if (aCrossSide !== bCrossSide) return aCrossSide - bCrossSide;
+        const aValidSide =
+          (a.comparator === "below" && a.price < markPrice) || (a.comparator === "above" && a.price > markPrice);
+        const bValidSide =
+          (b.comparator === "below" && b.price < markPrice) || (b.comparator === "above" && b.price > markPrice);
+        if (aValidSide !== bValidSide) return aValidSide ? -1 : 1;
+        const distanceA = Math.abs(a.price - markPrice);
+        const distanceB = Math.abs(b.price - markPrice);
+        if (distanceA !== distanceB) return distanceA - distanceB;
+      }
+      return b.yesProbability - a.yesProbability || a.endTime - b.endTime;
+    });
+
+  const hitLimit = isShortTimeframe ? 8 : 12;
+  const belowHitCandidates = hitCandidates.filter((target) => target.comparator === "below").slice(0, Math.floor(hitLimit / 2));
+  const aboveHitCandidates = hitCandidates.filter((target) => target.comparator !== "below").slice(0, Math.ceil(hitLimit / 2));
+  const balancedHitCandidates = [...belowHitCandidates, ...aboveHitCandidates]
+    .sort((a, b) => {
+      if (markPrice) {
         const distanceA = Math.abs(a.price - markPrice);
         const distanceB = Math.abs(b.price - markPrice);
         if (distanceA !== distanceB) return distanceA - distanceB;
       }
       return b.yesProbability - a.yesProbability || a.endTime - b.endTime;
     })
-    .slice(0, isShortTimeframe ? 8 : 10);
+    .slice(0, hitLimit);
 
-  for (const target of hitCandidates) {
+  for (const target of balancedHitCandidates) {
     if (selected.length >= maxTargets) break;
     selected.push(target);
     selectedIds.add(target.id);

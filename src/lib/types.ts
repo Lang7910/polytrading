@@ -67,16 +67,16 @@ export interface PolymarketDiagnostics {
 
 export type MAType = "sma" | "ema" | "wma" | "hma";
 
+export interface MovingAverageConfig {
+  id: string;
+  enabled: boolean;
+  type: MAType;
+  period: number;
+  color: string;
+}
+
 export interface ChartIndicators {
-  ma: {
-    enabled: boolean;
-    type: MAType;
-    period: number;
-  };
-  ema: {
-    enabled: boolean;
-    period: number;
-  };
+  movingAverages: MovingAverageConfig[];
   boll: {
     enabled: boolean;
     period: number;

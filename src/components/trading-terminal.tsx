@@ -1,6 +1,6 @@
 "use client";
 
-import { CandlestickChart, Search, SlidersHorizontal } from "lucide-react";
+import { CandlestickChart, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { MarketCard } from "@/components/market-card";
@@ -13,13 +13,16 @@ import { ASSETS, TIMEFRAMES } from "@/lib/constants";
 import { calcMarketSessionStats, type MarketSessionKey, type MarketSessionVisibility } from "@/lib/market-sessions";
 import { asDirectionalPredictions, asPriceTargetPredictions } from "@/lib/polymarket";
 import { calcPredictionSentiment } from "@/lib/prediction-sentiment";
-import type { Asset, ChartIndicators, DirectionalPrediction, PolymarketContract, Timeframe } from "@/lib/types";
+import type { Asset, ChartIndicators, DirectionalPrediction, MAType, MovingAverageConfig, PolymarketContract, Timeframe } from "@/lib/types";
 
 const SETTINGS_STORAGE_KEY = "polytrading.terminal-settings.v1";
+const MA_COLORS = ["#eab308", "#a855f7", "#06b6d4", "#f97316", "#22c55e", "#f43f5e"];
 
 const DEFAULT_INDICATORS: ChartIndicators = {
-  ma: { enabled: true, type: "sma", period: 20 },
-  ema: { enabled: true, period: 50 },
+  movingAverages: [
+    { id: "sma-60", enabled: true, type: "sma", period: 60, color: MA_COLORS[0] },
+    { id: "ema-60", enabled: true, type: "ema", period: 60, color: MA_COLORS[1] },
+  ],
   boll: { enabled: false, period: 20, stdDev: 2 },
   rsi: { enabled: false, period: 14 },
   macd: { enabled: false, fast: 12, slow: 26, signal: 9 },
@@ -71,17 +74,47 @@ function clampPeriod(value: unknown, fallback: number) {
   return Number.isFinite(parsed) ? Math.min(200, Math.max(2, parsed)) : fallback;
 }
 
+function isMAType(value: unknown): value is MAType {
+  return value === "sma" || value === "ema" || value === "wma" || value === "hma";
+}
+
+function createAverageId() {
+  return `ma-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sanitizeMovingAverages(value: unknown): MovingAverageConfig[] {
+  if (!Array.isArray(value)) return DEFAULT_INDICATORS.movingAverages;
+  const averages = value
+    .map((item, index): MovingAverageConfig | null => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Partial<MovingAverageConfig>;
+      return {
+        id: typeof record.id === "string" && record.id ? record.id : `ma-${index}`,
+        enabled: record.enabled ?? true,
+        type: isMAType(record.type) ? record.type : "sma",
+        period: clampPeriod(record.period, 60),
+        color: typeof record.color === "string" && record.color ? record.color : MA_COLORS[index % MA_COLORS.length],
+      };
+    })
+    .filter((item): item is MovingAverageConfig => Boolean(item))
+    .slice(0, 8);
+  return averages.length > 0 ? averages : DEFAULT_INDICATORS.movingAverages;
+}
+
 function mergeStoredIndicators(value: StoredTerminalSettings["indicators"]): ChartIndicators {
+  const legacy = value as
+    | (Partial<ChartIndicators> & {
+        ma?: { enabled?: boolean; type?: MAType; period?: number };
+        ema?: { enabled?: boolean; period?: number };
+      })
+    | undefined;
+  const movingAverages =
+    legacy?.movingAverages !== undefined
+      ? sanitizeMovingAverages(legacy.movingAverages)
+      : DEFAULT_INDICATORS.movingAverages;
+
   return {
-    ma: {
-      enabled: value?.ma?.enabled ?? DEFAULT_INDICATORS.ma.enabled,
-      type: value?.ma?.type ?? DEFAULT_INDICATORS.ma.type,
-      period: clampPeriod(value?.ma?.period, DEFAULT_INDICATORS.ma.period),
-    },
-    ema: {
-      enabled: value?.ema?.enabled ?? DEFAULT_INDICATORS.ema.enabled,
-      period: clampPeriod(value?.ema?.period, DEFAULT_INDICATORS.ema.period),
-    },
+    movingAverages,
     boll: {
       enabled: value?.boll?.enabled ?? DEFAULT_INDICATORS.boll.enabled,
       period: clampPeriod(value?.boll?.period, DEFAULT_INDICATORS.boll.period),
@@ -301,7 +334,7 @@ export function TradingTerminal() {
     }),
     [targetPredictions],
   );
-  const activeAverageCount = [indicators.ma.enabled, indicators.ema.enabled].filter(Boolean).length;
+  const activeAverageCount = indicators.movingAverages.filter((average) => average.enabled).length;
   const activeIndicatorCount = [
     indicators.boll.enabled,
     indicators.rsi.enabled,
@@ -385,22 +418,45 @@ export function TradingTerminal() {
       .slice(0, 4);
   }, [directionalPredictions, nowMs, selectedDirectional, timeframe]);
 
-  const currentDirectionalStatus = useMemo(() => {
-    if (timeframe === "1m") {
-      return { label: "当前周期无对应真实方向市场", tone: "text-zinc-400" };
-    }
-    if (selectedDirectional) {
-      return { label: "当前周期方向预测来源：REAL", tone: "text-emerald-400" };
-    }
-    return { label: "当前周期未匹配到真实方向市场", tone: "text-amber-400" };
-  }, [selectedDirectional, timeframe]);
-
   const gammaStatusText = useMemo(() => {
     if (diagnostics.ok) {
       return `Gamma 已连接: raw ${diagnostics.rawCount} / parsed ${diagnostics.parsedCount}`;
     }
     return `Gamma 降级: ${diagnostics.reason ?? "unknown"}`;
   }, [diagnostics]);
+
+  const addMovingAverage = () => {
+    setIndicators((prev) => {
+      const index = prev.movingAverages.length;
+      const nextAverage: MovingAverageConfig = {
+        id: createAverageId(),
+        enabled: true,
+        type: "sma",
+        period: 60,
+        color: MA_COLORS[index % MA_COLORS.length],
+      };
+      return {
+        ...prev,
+        movingAverages: [...prev.movingAverages, nextAverage].slice(0, 8),
+      };
+    });
+  };
+
+  const updateMovingAverage = (id: string, patch: Partial<MovingAverageConfig>) => {
+    setIndicators((prev) => ({
+      ...prev,
+      movingAverages: prev.movingAverages.map((average) =>
+        average.id === id ? { ...average, ...patch } : average,
+      ),
+    }));
+  };
+
+  const removeMovingAverage = (id: string) => {
+    setIndicators((prev) => ({
+      ...prev,
+      movingAverages: prev.movingAverages.filter((average) => average.id !== id),
+    }));
+  };
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#0a0a0a] text-zinc-300">
@@ -452,73 +508,70 @@ export function TradingTerminal() {
             </label>
 
             <ToolbarMenu label="均线" activeCount={activeAverageCount}>
-              <div className="space-y-2 text-xs">
-                <div className="grid grid-cols-2 gap-2">
+              <div className="w-72 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">最多 8 条</span>
                   <Button
                     size="sm"
-                    variant={indicators.ma.enabled ? "green" : "ghost"}
-                    onClick={() => setIndicators((prev) => ({ ...prev, ma: { ...prev.ma, enabled: !prev.ma.enabled } }))}
+                    variant="green"
+                    onClick={addMovingAverage}
+                    disabled={indicators.movingAverages.length >= 8}
+                    className="gap-1"
                   >
-                    MA
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={indicators.ema.enabled ? "green" : "ghost"}
-                    onClick={() => setIndicators((prev) => ({ ...prev, ema: { ...prev.ema, enabled: !prev.ema.enabled } }))}
-                  >
-                    EMA
+                    <Plus className="h-3.5 w-3.5" />
+                    添加
                   </Button>
                 </div>
-                <label className="flex items-center justify-between gap-3 rounded-md bg-zinc-900 px-2 py-1.5 text-zinc-400">
-                  MA 类型
-                  <select
-                    className="w-24 bg-transparent text-zinc-100 outline-none"
-                    value={indicators.ma.type}
-                    onChange={(event) =>
-                      setIndicators((prev) => ({
-                        ...prev,
-                        ma: { ...prev.ma, type: event.target.value as ChartIndicators["ma"]["type"] },
-                      }))
-                    }
-                  >
-                    <option value="sma" className="bg-zinc-950 text-zinc-100">SMA</option>
-                    <option value="ema" className="bg-zinc-950 text-zinc-100">EMA</option>
-                    <option value="wma" className="bg-zinc-950 text-zinc-100">WMA</option>
-                    <option value="hma" className="bg-zinc-950 text-zinc-100">HMA</option>
-                  </select>
-                </label>
-                <label className="flex items-center justify-between gap-3 rounded-md bg-zinc-900 px-2 py-1.5 text-zinc-400">
-                  MA 周期
-                  <input
-                    type="number"
-                    min={2}
-                    max={200}
-                    value={indicators.ma.period}
-                    onChange={(event) =>
-                      setIndicators((prev) => ({
-                        ...prev,
-                        ma: { ...prev.ma, period: Math.min(200, Math.max(2, Number(event.target.value) || 20)) },
-                      }))
-                    }
-                    className="w-24 bg-transparent text-right text-zinc-100 outline-none"
-                  />
-                </label>
-                <label className="flex items-center justify-between gap-3 rounded-md bg-zinc-900 px-2 py-1.5 text-zinc-400">
-                  EMA 周期
-                  <input
-                    type="number"
-                    min={2}
-                    max={200}
-                    value={indicators.ema.period}
-                    onChange={(event) =>
-                      setIndicators((prev) => ({
-                        ...prev,
-                        ema: { ...prev.ema, period: Math.min(200, Math.max(2, Number(event.target.value) || 50)) },
-                      }))
-                    }
-                    className="w-24 bg-transparent text-right text-zinc-100 outline-none"
-                  />
-                </label>
+                {indicators.movingAverages.length === 0 ? (
+                  <div className="rounded-md bg-zinc-900 px-2 py-2 text-zinc-500">未添加均线</div>
+                ) : (
+                  <div className="space-y-2">
+                    {indicators.movingAverages.map((average) => (
+                      <div key={average.id} className="grid grid-cols-[26px_72px_1fr_28px] items-center gap-2 rounded-md bg-zinc-900 p-2">
+                        <button
+                          type="button"
+                          title={average.enabled ? "隐藏" : "显示"}
+                          className={`h-6 w-6 rounded border ${
+                            average.enabled ? "border-emerald-600 bg-emerald-500/15" : "border-zinc-700 bg-zinc-950"
+                          }`}
+                          onClick={() => updateMovingAverage(average.id, { enabled: !average.enabled })}
+                        >
+                          <span className="mx-auto block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: average.color }} />
+                        </button>
+                        <select
+                          className="h-7 rounded bg-zinc-950 px-2 text-zinc-100 outline-none"
+                          value={average.type}
+                          onChange={(event) => updateMovingAverage(average.id, { type: event.target.value as MAType })}
+                        >
+                          <option value="sma" className="bg-zinc-950 text-zinc-100">SMA</option>
+                          <option value="ema" className="bg-zinc-950 text-zinc-100">EMA</option>
+                          <option value="wma" className="bg-zinc-950 text-zinc-100">WMA</option>
+                          <option value="hma" className="bg-zinc-950 text-zinc-100">HMA</option>
+                        </select>
+                        <input
+                          type="number"
+                          min={2}
+                          max={200}
+                          value={average.period}
+                          onChange={(event) =>
+                            updateMovingAverage(average.id, {
+                              period: Math.min(200, Math.max(2, Number(event.target.value) || 60)),
+                            })
+                          }
+                          className="h-7 rounded bg-zinc-950 px-2 text-right text-zinc-100 outline-none"
+                        />
+                        <button
+                          type="button"
+                          title="删除"
+                          className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-red-500/15 hover:text-red-300"
+                          onClick={() => removeMovingAverage(average.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </ToolbarMenu>
 
@@ -639,58 +692,6 @@ export function TradingTerminal() {
               sessions={sessionVisibility}
               chartStateKey={`${asset}-${timeframe}`}
             />
-            <div className="pointer-events-none absolute left-4 top-4 w-56 rounded-lg border border-emerald-500/30 bg-black/60 p-3 backdrop-blur">
-              <div className="mb-2 text-xs text-zinc-400">短线预测</div>
-              <div className="space-y-1 text-sm">
-                <div className="flex items-center justify-between">
-                  <span>5m</span>
-                  <span className={m5.market ? "text-emerald-400" : "text-zinc-500"}>
-                    {m5.market ? `${Math.round(m5.market.probabilities.yes * 100)}%` : "无真实数据"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>15m</span>
-                  <span className={m15.market ? "text-emerald-400" : "text-zinc-500"}>
-                    {m15.market ? `${Math.round(m15.market.probabilities.yes * 100)}%` : "无真实数据"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>1h</span>
-                  <span className={h1.market ? "text-emerald-400" : "text-zinc-500"}>
-                    {h1.market ? `${Math.round(h1.market.probabilities.yes * 100)}%` : "无真实数据"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>4h</span>
-                  <span className={h4.market ? "text-emerald-400" : "text-zinc-500"}>
-                    {h4.market ? `${Math.round(h4.market.probabilities.yes * 100)}%` : "无真实数据"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span>1d</span>
-                  <span className={d1.market ? "text-emerald-400" : "text-zinc-500"}>
-                    {d1.market ? `${Math.round(d1.market.probabilities.yes * 100)}%` : "无真实数据"}
-                  </span>
-                </div>
-                <div className={`pt-1 text-xs ${currentDirectionalStatus.tone}`}>{currentDirectionalStatus.label}</div>
-                <div className="pt-1 text-[10px] text-zinc-500">
-                  5m: {m5.diagnostics.ok ? "REAL" : m5.diagnostics.reason ?? "waiting_real_data"}
-                </div>
-                <div className="text-[10px] text-zinc-500">
-                  15m: {m15.diagnostics.ok ? "REAL" : m15.diagnostics.reason ?? "waiting_real_data"} | 1h:{" "}
-                  {h1.diagnostics.ok ? "REAL" : h1.diagnostics.reason ?? "waiting_real_data"}
-                </div>
-                <div className="text-[10px] text-zinc-500">
-                  4h: {h4.diagnostics.ok ? "REAL" : h4.diagnostics.reason ?? "waiting_real_data"} | 1d:{" "}
-                  {d1.diagnostics.ok ? "REAL" : d1.diagnostics.reason ?? "waiting_real_data"}
-                </div>
-                {([m5.market, m15.market, h1.market, h4.market, d1.market].some(
-                  (item) => item?.status === "resolving",
-                )) && (
-                  <div className="pt-1 text-xs text-yellow-400">结算中，等待下期...</div>
-                )}
-              </div>
-            </div>
           </div>
         </main>
 

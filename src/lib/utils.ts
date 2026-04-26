@@ -27,5 +27,7 @@ export function timeframeToMs(timeframe: "5m" | "15m" | "1h" | "4h" | "1d") {
 }
 
 export function toPercent(value: number) {
+  if (value > 0 && value < 0.01) return "<1%";
+  if (value < 1 && value > 0.99) return ">99%";
   return `${Math.round(value * 100)}%`;
 }

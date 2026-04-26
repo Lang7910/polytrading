@@ -20,9 +20,10 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { calcDfmaIndicator } from "@/lib/dfma-indicator";
-import { calcBollingerBands, calcEMA, calcMACD, calcMovingAverage, calcRSI } from "@/lib/indicators";
+import { calcBollingerBands, calcMACD, calcMovingAverage, calcRSI } from "@/lib/indicators";
 import { buildMarketSessionMarkers, type MarketSessionVisibility } from "@/lib/market-sessions";
 import type { ChartIndicators, DirectionalPrediction, KlinePoint, PriceTargetPrediction } from "@/lib/types";
+import { toPercent } from "@/lib/utils";
 
 export interface PredictionLayerVisibility {
   directional: boolean;
@@ -89,11 +90,12 @@ function formatTargetPrice(price: number) {
 }
 
 function targetOpacity(probability: number) {
+  if (probability > 0 && probability < 0.01) return 0.2;
   return Math.max(0.28, Math.min(0.9, probability));
 }
 
 function toChartTargetLines(target: PriceTargetPrediction): ChartTargetLine[] {
-  const probability = `${Math.round(target.yesProbability * 100)}%`;
+  const probability = toPercent(target.yesProbability);
   const alpha = targetOpacity(target.yesProbability);
 
   if (target.priceTargetType === "range" && target.rangeLow !== undefined && target.rangeHigh !== undefined) {
@@ -170,8 +172,7 @@ export function TradingChart({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
-  const maSeriesRef = useRef<ISeriesApi<"Line", Time> | null>(null);
-  const emaSeriesRef = useRef<ISeriesApi<"Line", Time> | null>(null);
+  const averageSeriesRef = useRef<Map<string, ISeriesApi<"Line", Time>>>(new Map());
   const bollMiddleSeriesRef = useRef<ISeriesApi<"Line", Time> | null>(null);
   const bollUpperSeriesRef = useRef<ISeriesApi<"Line", Time> | null>(null);
   const bollLowerSeriesRef = useRef<ISeriesApi<"Line", Time> | null>(null);
@@ -202,11 +203,25 @@ export function TradingChart({
       })),
     [candles],
   );
-  const maData = useMemo(
-    () => calcMovingAverage(candles, indicators.ma.period, indicators.ma.type),
-    [candles, indicators.ma.period, indicators.ma.type],
+  const averageData = useMemo(
+    () =>
+      indicators.movingAverages.map((average) => ({
+        average,
+        data: calcMovingAverage(candles, average.period, average.type),
+      })),
+    [candles, indicators.movingAverages],
   );
-  const emaData = useMemo(() => calcEMA(candles, indicators.ema.period), [candles, indicators.ema.period]);
+  const activeAverageLegend = useMemo(
+    () =>
+      indicators.movingAverages
+        .filter((average) => average.enabled)
+        .map((average) => ({
+          id: average.id,
+          label: `${average.type.toUpperCase()} ${average.period}`,
+          color: average.color,
+        })),
+    [indicators.movingAverages],
+  );
   const bollData = useMemo(
     () => calcBollingerBands(candles, indicators.boll.period, indicators.boll.stdDev),
     [candles, indicators.boll.period, indicators.boll.stdDev],
@@ -241,6 +256,18 @@ export function TradingChart({
         vertLine: { color: "rgba(255,255,255,0.25)" },
         horzLine: { color: "rgba(255,255,255,0.25)" },
       },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
+        axisDoubleClickReset: {
+          time: true,
+          price: true,
+        },
+      },
     });
 
     const series = chart.addSeries(CandlestickSeries, {
@@ -254,16 +281,6 @@ export function TradingChart({
 
     chartRef.current = chart;
     seriesRef.current = series;
-    maSeriesRef.current = chart.addSeries(LineSeries, {
-      color: "#eab308",
-      lineWidth: 1,
-      title: "MA",
-    });
-    emaSeriesRef.current = chart.addSeries(LineSeries, {
-      color: "#a855f7",
-      lineWidth: 1,
-      title: "EMA",
-    });
     bollMiddleSeriesRef.current = chart.addSeries(LineSeries, {
       color: "#06b6d4",
       lineWidth: 1,
@@ -340,14 +357,14 @@ export function TradingChart({
       });
     });
     observer.observe(containerRef.current);
+    const averageSeries = averageSeriesRef.current;
 
     return () => {
       observer.disconnect();
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
-      maSeriesRef.current = null;
-      emaSeriesRef.current = null;
+      averageSeries.clear();
       bollMiddleSeriesRef.current = null;
       bollUpperSeriesRef.current = null;
       bollLowerSeriesRef.current = null;
@@ -402,6 +419,7 @@ export function TradingChart({
 
     if (didResetData) {
       seriesRef.current.setData(candleData);
+      seriesRef.current.priceScale().setAutoScale(true);
       const storedRange = readStoredLogicalRange(chartStateKey);
       if (storedRange) {
         chartRef.current?.timeScale().setVisibleLogicalRange(storedRange);
@@ -419,8 +437,6 @@ export function TradingChart({
 
   useEffect(() => {
     if (
-      !maSeriesRef.current ||
-      !emaSeriesRef.current ||
       !bollMiddleSeriesRef.current ||
       !bollUpperSeriesRef.current ||
       !bollLowerSeriesRef.current ||
@@ -433,8 +449,31 @@ export function TradingChart({
       return;
     }
 
-    maSeriesRef.current.setData(indicators.ma.enabled ? maData : []);
-    emaSeriesRef.current.setData(indicators.ema.enabled ? emaData : []);
+    const activeAverageIds = new Set(averageData.map(({ average }) => average.id));
+    for (const [id, series] of averageSeriesRef.current) {
+      if (!activeAverageIds.has(id)) {
+        chartRef.current.removeSeries(series);
+        averageSeriesRef.current.delete(id);
+      }
+    }
+
+    for (const { average, data } of averageData) {
+      let averageSeries = averageSeriesRef.current.get(average.id);
+      if (!averageSeries) {
+        averageSeries = chartRef.current.addSeries(LineSeries, {
+          color: average.color,
+          lineWidth: 1,
+          title: `${average.type.toUpperCase()}${average.period}`,
+        });
+        averageSeriesRef.current.set(average.id, averageSeries);
+      }
+      averageSeries.applyOptions({
+        color: average.color,
+        title: `${average.type.toUpperCase()}${average.period}`,
+      });
+      averageSeries.setData(average.enabled ? data : []);
+    }
+
     if (indicators.boll.enabled) {
       bollMiddleSeriesRef.current.setData(bollData.middle);
       bollUpperSeriesRef.current.setData(bollData.upper);
@@ -480,16 +519,13 @@ export function TradingChart({
       macdScale.applyOptions({ visible: false });
     }
   }, [
+    averageData,
     bollData.lower,
     bollData.middle,
     bollData.upper,
-    emaData,
     indicators.boll.enabled,
-    indicators.ema.enabled,
     indicators.macd.enabled,
-    indicators.ma.enabled,
     indicators.rsi.enabled,
-    maData,
     macdData.histogram,
     macdData.macdLine,
     macdData.signalLine,
@@ -629,6 +665,16 @@ export function TradingChart({
   return (
     <div className="relative h-full min-h-0 w-full rounded-xl border border-zinc-800 bg-[#0a0f14]">
       <div ref={containerRef} className="h-full w-full" />
+      {activeAverageLegend.length > 0 && (
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap gap-2 rounded-md border border-zinc-800/80 bg-black/55 px-3 py-2 text-[11px] text-zinc-300 backdrop-blur">
+          {activeAverageLegend.map((item) => (
+            <span key={item.id} className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+              <span>{item.label}</span>
+            </span>
+          ))}
+        </div>
+      )}
       {(hasAboveBelowTargets || hasRangeTargets || hasHitTargets || hasGenericTargets) && (
         <div className="pointer-events-none absolute bottom-3 right-3 flex flex-wrap gap-2 rounded-md border border-zinc-800/80 bg-black/60 px-3 py-2 text-[11px] text-zinc-300 backdrop-blur">
           {hasAboveBelowTargets && (
