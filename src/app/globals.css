@@ -55,3 +55,109 @@ body {
 .font-mono {
   font-family: var(--font-geist-mono), monospace;
 }
+
+.cl-card,
+.cl-cardBox,
+.cl-modalContent,
+.cl-userButtonPopoverCard,
+.cl-userProfile-root {
+  background: #121212 !important;
+  color: #f4f4f5 !important;
+}
+
+.cl-cardBox,
+.cl-modalContent,
+.cl-userButtonPopoverCard,
+.cl-userProfile-root {
+  border: 1px solid #2f2f35 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.5) !important;
+  overflow: hidden !important;
+}
+
+.cl-card *,
+.cl-modalContent *,
+.cl-userButtonPopoverCard *,
+.cl-userProfile-root * {
+  color: inherit;
+}
+
+.cl-headerTitle,
+.cl-formHeaderTitle,
+.cl-profileSectionTitle,
+.cl-pricingTableCardTitle,
+.cl-pricingTableCardFee,
+.cl-pricingTableCardFeeAmount,
+.cl-planDetailsTitle,
+.cl-userPreviewMainIdentifier,
+.cl-userButtonPopoverActionButtonText {
+  color: #f4f4f5 !important;
+}
+
+.cl-headerSubtitle,
+.cl-formHeaderSubtitle,
+.cl-userPreviewSecondaryIdentifier,
+.cl-breadcrumbsItem,
+.cl-formFieldHintText,
+.cl-pricingTableCardDescription,
+.cl-pricingTableCardFeePeriod,
+.cl-pricingTableCardFeatures,
+.cl-profileSectionSubtitle,
+.cl-profileSectionContent p,
+.cl-tableHead,
+.cl-tableCell {
+  color: #a1a1aa !important;
+}
+
+.cl-pricingTableCard,
+.cl-planCard,
+.cl-profileSection,
+.cl-subscriptionDetails,
+.cl-table {
+  background: #18181b !important;
+  border: 1px solid #303036 !important;
+  border-radius: 8px !important;
+}
+
+.cl-badge {
+  background: #064e3b !important;
+  color: #a7f3d0 !important;
+}
+
+.cl-userButtonPopoverActionButton,
+.cl-navbarButton,
+.cl-subscriptionDetailsButton {
+  color: #e4e4e7 !important;
+}
+
+.cl-userButtonPopoverActionButton:hover,
+.cl-navbarButton:hover,
+.cl-navbarButton__active,
+.cl-subscriptionDetailsButton:hover {
+  background: #27272a !important;
+  color: #ffffff !important;
+}
+
+.cl-formButtonPrimary,
+.cl-profileSectionPrimaryButton,
+.cl-pricingTableCardButton,
+.cl-planDetailsSubscribeButton,
+.cl-subscriptionDetailsSwitchPlansButton {
+  background: #10b981 !important;
+  border: 1px solid #34d399 !important;
+  border-radius: 8px !important;
+  color: #ffffff !important;
+}
+
+.cl-formButtonPrimary:hover,
+.cl-profileSectionPrimaryButton:hover,
+.cl-pricingTableCardButton:hover,
+.cl-planDetailsSubscribeButton:hover,
+.cl-subscriptionDetailsSwitchPlansButton:hover {
+  background: #059669 !important;
+  border-color: #6ee7b7 !important;
+}
+
+.cl-footer {
+  background: #09090b !important;
+}

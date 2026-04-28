@@ -2,7 +2,10 @@
 
 import { CandlestickChart, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { AuthControls } from "@/components/auth-controls";
+import { LanguageToggle } from "@/components/language-toggle";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/components/i18n-provider";
 import { MarketCard } from "@/components/market-card";
 import { TradingChart, type PredictionLayerVisibility } from "@/components/trading-chart";
 import { useBinanceKline } from "@/hooks/use-binance-kline";
@@ -192,6 +195,7 @@ function ToolbarMenu({
 }
 
 export function TradingTerminal() {
+  const { t } = useI18n();
   const [asset, setAsset] = useState<Asset>("BTC");
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const [indicators, setIndicators] = useState<ChartIndicators>(DEFAULT_INDICATORS);
@@ -420,10 +424,18 @@ export function TradingTerminal() {
 
   const gammaStatusText = useMemo(() => {
     if (diagnostics.ok) {
-      return `Gamma 已连接: raw ${diagnostics.rawCount} / parsed ${diagnostics.parsedCount}`;
+      return `${t("terminal.gammaConnected")}: raw ${diagnostics.rawCount} / parsed ${diagnostics.parsedCount}`;
     }
-    return `Gamma 降级: ${diagnostics.reason ?? "unknown"}`;
-  }, [diagnostics]);
+    return `${t("terminal.gammaFallback")}: ${diagnostics.reason ?? "unknown"}`;
+  }, [diagnostics, t]);
+
+  const sentimentLabel = (label: string) => {
+    if (label === "涨跌") return t("sentiment.directional");
+    if (label === "高低价") return t("sentiment.aboveBelow");
+    if (label === "区间") return t("sentiment.range");
+    if (label === "触及") return t("sentiment.hit");
+    return label;
+  };
 
   const addMovingAverage = () => {
     setIndicators((prev) => {
@@ -470,22 +482,16 @@ export function TradingTerminal() {
           </h1>
         </div>
         <div className="flex items-center gap-2">
-          {ASSETS.map((item) => (
-            <Button
-              key={item}
-              size="sm"
-              variant={item === asset ? "green" : "ghost"}
-              onClick={() => setAsset(item)}
-            >
-              {item}/USDT
-            </Button>
-          ))}
           <Button size="sm" variant="ghost" aria-label="search">
             <Search className="h-4 w-4" />
           </Button>
           <Button size="sm" variant="ghost" aria-label="filters">
             <SlidersHorizontal className="h-4 w-4" />
           </Button>
+          <LanguageToggle />
+          <div className="ml-2 border-l border-zinc-800 pl-3">
+            <AuthControls />
+          </div>
         </div>
       </header>
 
@@ -493,7 +499,7 @@ export function TradingTerminal() {
         <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4">
           <div className="mb-4 flex shrink-0 items-center gap-2">
             <label className="flex h-8 items-center gap-2 rounded-md bg-zinc-900 px-2 text-xs text-zinc-400">
-              周期
+              {t("terminal.timeframe")}
               <select
                 className="bg-transparent text-zinc-100 outline-none"
                 value={timeframe}
@@ -506,11 +512,25 @@ export function TradingTerminal() {
                 ))}
               </select>
             </label>
+            <label className="flex h-8 items-center gap-2 rounded-md bg-zinc-900 px-2 text-xs text-zinc-400">
+              {t("terminal.asset")}
+              <select
+                className="min-w-24 bg-transparent text-zinc-100 outline-none"
+                value={asset}
+                onChange={(event) => setAsset(event.target.value as Asset)}
+              >
+                {ASSETS.map((item) => (
+                  <option key={item} value={item} className="bg-zinc-950 text-zinc-100">
+                    {item}/USDT
+                  </option>
+                ))}
+              </select>
+            </label>
 
-            <ToolbarMenu label="均线" activeCount={activeAverageCount}>
+            <ToolbarMenu label={t("terminal.movingAverages")} activeCount={activeAverageCount}>
               <div className="w-72 space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-zinc-500">最多 8 条</span>
+                  <span className="text-zinc-500">{t("terminal.maxMa")}</span>
                   <Button
                     size="sm"
                     variant="green"
@@ -519,18 +539,18 @@ export function TradingTerminal() {
                     className="gap-1"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    添加
+                    {t("terminal.add")}
                   </Button>
                 </div>
                 {indicators.movingAverages.length === 0 ? (
-                  <div className="rounded-md bg-zinc-900 px-2 py-2 text-zinc-500">未添加均线</div>
+                  <div className="rounded-md bg-zinc-900 px-2 py-2 text-zinc-500">{t("terminal.noMa")}</div>
                 ) : (
                   <div className="space-y-2">
                     {indicators.movingAverages.map((average) => (
                       <div key={average.id} className="grid grid-cols-[26px_72px_1fr_28px] items-center gap-2 rounded-md bg-zinc-900 p-2">
                         <button
                           type="button"
-                          title={average.enabled ? "隐藏" : "显示"}
+                          title={average.enabled ? t("terminal.hide") : t("terminal.show")}
                           className={`h-6 w-6 rounded border ${
                             average.enabled ? "border-emerald-600 bg-emerald-500/15" : "border-zinc-700 bg-zinc-950"
                           }`}
@@ -562,7 +582,7 @@ export function TradingTerminal() {
                         />
                         <button
                           type="button"
-                          title="删除"
+                          title={t("terminal.delete")}
                           className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 hover:bg-red-500/15 hover:text-red-300"
                           onClick={() => removeMovingAverage(average.id)}
                         >
@@ -575,7 +595,7 @@ export function TradingTerminal() {
               </div>
             </ToolbarMenu>
 
-            <ToolbarMenu label="指标" activeCount={activeIndicatorCount}>
+            <ToolbarMenu label={t("terminal.indicators")} activeCount={activeIndicatorCount}>
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   size="sm"
@@ -608,14 +628,14 @@ export function TradingTerminal() {
               </div>
             </ToolbarMenu>
 
-            <ToolbarMenu label="预测" activeCount={activePredictionLayerCount}>
+            <ToolbarMenu label={t("terminal.predictions")} activeCount={activePredictionLayerCount}>
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   size="sm"
                   variant={predictionVisibility.directional ? "green" : "ghost"}
                   onClick={() => setPredictionVisibility((prev) => ({ ...prev, directional: !prev.directional }))}
                 >
-                  涨跌
+                  {t("terminal.directional")}
                 </Button>
                 <Button
                   size="sm"
@@ -623,7 +643,7 @@ export function TradingTerminal() {
                   disabled={!targetTypeAvailability.aboveBelow}
                   onClick={() => setPredictionVisibility((prev) => ({ ...prev, aboveBelow: !prev.aboveBelow }))}
                 >
-                  高于/低于
+                  {t("chart.aboveBelow")}
                 </Button>
                 <Button
                   size="sm"
@@ -631,7 +651,7 @@ export function TradingTerminal() {
                   disabled={!targetTypeAvailability.range}
                   onClick={() => setPredictionVisibility((prev) => ({ ...prev, range: !prev.range }))}
                 >
-                  区间
+                  {t("chart.range")}
                 </Button>
                 <Button
                   size="sm"
@@ -639,12 +659,12 @@ export function TradingTerminal() {
                   disabled={!targetTypeAvailability.hit}
                   onClick={() => setPredictionVisibility((prev) => ({ ...prev, hit: !prev.hit }))}
                 >
-                  触及
+                  {t("chart.hit")}
                 </Button>
               </div>
             </ToolbarMenu>
 
-            <ToolbarMenu label="时段" activeCount={activeSessionCount}>
+            <ToolbarMenu label={t("terminal.session")} activeCount={activeSessionCount}>
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   size="sm"
@@ -678,7 +698,7 @@ export function TradingTerminal() {
             </ToolbarMenu>
 
             <div className="ml-auto rounded-md border border-zinc-800 bg-zinc-900 px-3 py-1 text-xs">
-              {markPrice ? `当前价 ${markPrice.toLocaleString()}` : "等待行情..."}
+              {markPrice ? `${t("terminal.currentPrice")} ${markPrice.toLocaleString()}` : t("terminal.priceWaiting")}
             </div>
           </div>
 
@@ -697,8 +717,8 @@ export function TradingTerminal() {
 
         <aside className="hidden h-full w-[380px] shrink-0 overflow-y-auto border-l border-zinc-800 bg-[#101010] p-4 xl:block">
           <div className="mb-3 flex items-center justify-between">
-            <div className="text-sm font-semibold text-zinc-100">预测市场</div>
-            <div className="text-xs text-zinc-500">按 {timeframe} 优先排序</div>
+            <div className="text-sm font-semibold text-zinc-100">{t("terminal.predictionMarket")}</div>
+            <div className="text-xs text-zinc-500">{t("terminal.sortBy", { timeframe })}</div>
           </div>
           <div
             className={`mb-3 rounded border p-3 text-xs ${
@@ -709,7 +729,7 @@ export function TradingTerminal() {
           >
             <div>{gammaStatusText}</div>
             <div className="mt-1 text-zinc-400">
-              当前来源模式: {diagnostics.sourceMode.toUpperCase()}
+              {t("terminal.marketMode")}: {diagnostics.sourceMode.toUpperCase()}
               {diagnostics.fetchedAt ? ` | ${new Date(diagnostics.fetchedAt).toLocaleTimeString()}` : ""}
             </div>
           </div>
@@ -720,7 +740,7 @@ export function TradingTerminal() {
               onClick={() => setIsSentimentCollapsed((prev) => !prev)}
               aria-expanded={!isSentimentCollapsed}
             >
-              <div className="text-xs font-medium text-zinc-300">预测情绪</div>
+              <div className="text-xs font-medium text-zinc-300">{t("terminal.sentiment")}</div>
               <div className="flex items-center gap-2">
                 <span
                   className={`text-sm font-semibold ${
@@ -755,7 +775,7 @@ export function TradingTerminal() {
                   {predictionSentiment.breakdown.map((item) => (
                     <div key={item.label} className="rounded-md bg-zinc-900 px-2 py-1">
                       <div className="flex items-center justify-between text-zinc-400">
-                        <span>{item.label}</span>
+                        <span>{sentimentLabel(item.label)}</span>
                         <span>{item.count}</span>
                       </div>
                       <div className={item.score > 8 ? "text-emerald-300" : item.score < -8 ? "text-red-300" : "text-zinc-300"}>
@@ -771,13 +791,13 @@ export function TradingTerminal() {
           {activeSessionCount > 0 && (isSessionHistoryLoading || sessionHistoryError) && (
             <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs text-zinc-500">
               {sessionHistoryError
-                ? `时段统计历史 K 线异常：${sessionHistoryError}`
-                : "正在加载独立 15m 历史 K 线用于时段统计"}
+                ? `${t("terminal.sessionHistoryError")}: ${sessionHistoryError}`
+                : t("terminal.loadingSessionHistory")}
             </div>
           )}
           {sessionStatsList.length === 0 ? (
             <div className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs text-zinc-500">
-              开启至少一个市场时段后显示统计
+              {t("terminal.enableOneSession")}
             </div>
           ) : (
             sessionStatsList.map((sessionStats) => {
@@ -795,7 +815,7 @@ export function TradingTerminal() {
                     }
                     aria-expanded={!isCollapsed}
                   >
-                    <div className="text-xs font-medium text-zinc-300">{sessionStats.label} 时段统计</div>
+                    <div className="text-xs font-medium text-zinc-300">{sessionStats.label} {t("terminal.sessionStats")}</div>
                     <div className="flex items-center gap-2">
                       <span
                         className={
@@ -813,33 +833,33 @@ export function TradingTerminal() {
                     <>
                       <div className="mb-2 grid grid-cols-3 gap-2 text-[11px]">
                         <div className="rounded-md bg-zinc-900 px-2 py-1">
-                          <div className="text-zinc-500">样本</div>
+                          <div className="text-zinc-500">{t("terminal.samples")}</div>
                           <div className="text-zinc-200">{sessionStats.total}</div>
                         </div>
                         <div className="rounded-md bg-zinc-900 px-2 py-1">
-                          <div className="text-zinc-500">上涨</div>
+                          <div className="text-zinc-500">{t("terminal.upCount")}</div>
                           <div className="text-emerald-300">
                             {sessionStats.up}/{sessionStats.total || 0}
                           </div>
                         </div>
                         <div className="rounded-md bg-zinc-900 px-2 py-1">
-                          <div className="text-zinc-500">胜率</div>
+                          <div className="text-zinc-500">{t("terminal.winRate")}</div>
                           <div className="text-zinc-200">{Math.round(sessionStats.winRate * 100)}%</div>
                         </div>
                         <div className="rounded-md bg-zinc-900 px-2 py-1">
-                          <div className="text-zinc-500">平均</div>
+                          <div className="text-zinc-500">{t("terminal.average")}</div>
                           <div className={sessionStats.avgChangePct >= 0 ? "text-emerald-300" : "text-red-300"}>
                             {formatSignedPct(sessionStats.avgChangePct)}
                           </div>
                         </div>
                         <div className="rounded-md bg-zinc-900 px-2 py-1">
-                          <div className="text-zinc-500">最大</div>
+                          <div className="text-zinc-500">{t("terminal.max")}</div>
                           <div className={sessionStats.maxChangePct >= 0 ? "text-emerald-300" : "text-red-300"}>
                             {formatSignedPct(sessionStats.maxChangePct)}
                           </div>
                         </div>
                         <div className="rounded-md bg-zinc-900 px-2 py-1">
-                          <div className="text-zinc-500">最小</div>
+                          <div className="text-zinc-500">{t("terminal.min")}</div>
                           <div className={sessionStats.minChangePct >= 0 ? "text-emerald-300" : "text-red-300"}>
                             {formatSignedPct(sessionStats.minChangePct)}
                           </div>
@@ -847,7 +867,7 @@ export function TradingTerminal() {
                       </div>
                       <div className="space-y-1 text-[11px]">
                         {sessionStats.recent.length === 0 ? (
-                          <div className="text-zinc-500">独立 15m 历史中没有完整开收盘样本</div>
+                          <div className="text-zinc-500">{t("terminal.noCompleteSessionSamples")}</div>
                         ) : (
                           sessionStats.recent.map((move) => (
                             <div
@@ -872,14 +892,14 @@ export function TradingTerminal() {
           )}
 
           {isKlineLoading && (
-            <div className="mb-3 rounded border border-zinc-800 bg-zinc-900 p-3 text-sm text-zinc-400">行情加载中...</div>
+            <div className="mb-3 rounded border border-zinc-800 bg-zinc-900 p-3 text-sm text-zinc-400">{t("terminal.klineLoading")}</div>
           )}
           {error && <div className="mb-3 rounded border border-red-900/50 bg-red-950/20 p-3 text-sm text-red-300">{error}</div>}
 
           <div className="space-y-3 pr-1 pb-4">
             {followupDirectional.length > 0 && (
               <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
-                <div className="mb-2 text-xs font-medium text-zinc-300">后续时段</div>
+                <div className="mb-2 text-xs font-medium text-zinc-300">{t("terminal.followingPeriods")}</div>
                 <div className="grid gap-2">
                   {followupDirectional.map((item) => {
                     const isUp = item.yes >= item.no;
@@ -889,10 +909,10 @@ export function TradingTerminal() {
                         className="flex items-center justify-between rounded-md bg-zinc-900/80 px-2 py-1.5 text-xs"
                       >
                         <span className="text-zinc-400">
-                          {item.endDate ? new Date(item.endDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "后续"}
+                          {item.endDate ? new Date(item.endDate).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : t("terminal.followingPeriods")}
                         </span>
                         <span className={isUp ? "text-emerald-300" : "text-red-300"}>
-                          {isUp ? "涨" : "跌"} {Math.round(Math.max(item.yes, item.no) * 100)}%
+                          {isUp ? t("chart.up") : t("chart.down")} {Math.round(Math.max(item.yes, item.no) * 100)}%
                         </span>
                       </div>
                     );

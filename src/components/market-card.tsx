@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useI18n } from "@/components/i18n-provider";
 import type { OutcomeQuote, PolymarketContract } from "@/lib/types";
 import { toPercent } from "@/lib/utils";
 
@@ -14,20 +15,22 @@ function quoteLabel(quote: OutcomeQuote | undefined) {
   return "--";
 }
 
-function targetTypeLabel(type: PolymarketContract["priceTargetType"]) {
-  if (type === "above-below") return "高低价";
-  if (type === "range") return "价格区间";
-  if (type === "hit") return "触及价";
-  return "目标价";
-}
-
 export function MarketCard({ market }: { market: PolymarketContract }) {
+  const { t } = useI18n();
   const yesPercent = Math.round(market.probabilities.yes * 100);
   const noPercent = Math.max(0, 100 - yesPercent);
   const yesBuyLabel = quoteLabel(market.quotes?.yes);
   const noBuyLabel = quoteLabel(market.quotes?.no);
   const positiveLabel = market.marketType === "directional" ? "Up" : "Yes";
   const negativeLabel = market.marketType === "directional" ? "Down" : "No";
+  const targetTypeLabel =
+    market.priceTargetType === "above-below"
+      ? t("market.aboveBelow")
+      : market.priceTargetType === "range"
+        ? t("market.range")
+        : market.priceTargetType === "hit"
+          ? t("market.hit")
+          : t("market.target");
 
   return (
     <Card className="transition-colors hover:border-zinc-700">
@@ -36,11 +39,11 @@ export function MarketCard({ market }: { market: PolymarketContract }) {
           <div className="flex items-center gap-1.5">
             <Badge>{market.asset}</Badge>
             <Badge>{market.timeframe}</Badge>
-            {market.marketType === "price-target" && <Badge>{targetTypeLabel(market.priceTargetType)}</Badge>}
+            {market.marketType === "price-target" && <Badge>{targetTypeLabel}</Badge>}
             <Badge className="border-emerald-700 text-emerald-300">{market.source.toUpperCase()}</Badge>
           </div>
           <Badge className={market.status === "resolving" ? "border-yellow-700 text-yellow-400" : ""}>
-            {market.status === "resolving" ? "结算中" : "实时"}
+            {market.status === "resolving" ? t("market.resolving") : t("market.live")}
           </Badge>
         </div>
         <div className="flex items-center gap-1.5">
@@ -65,21 +68,21 @@ export function MarketCard({ market }: { market: PolymarketContract }) {
               <span>{positiveLabel}</span>
               <span className="font-semibold">{toPercent(market.probabilities.yes)}</span>
             </div>
-            <div className="mt-1 text-zinc-400">买 {yesBuyLabel}</div>
+            <div className="mt-1 text-zinc-400">{t("market.buy")} {yesBuyLabel}</div>
           </div>
           <div className="rounded-md bg-red-950/20 p-2">
             <div className="flex items-center justify-between text-red-300">
               <span>{negativeLabel}</span>
               <span className="font-semibold">{toPercent(market.probabilities.no)}</span>
             </div>
-            <div className="mt-1 text-zinc-400">买 {noBuyLabel}</div>
+            <div className="mt-1 text-zinc-400">{t("market.buy")} {noBuyLabel}</div>
           </div>
         </div>
         <div className="flex h-1.5 overflow-hidden rounded-full bg-zinc-800">
           <div className="h-full bg-emerald-500" style={{ width: `${yesPercent}%` }} />
           <div className="h-full bg-red-500" style={{ width: `${noPercent}%` }} />
         </div>
-        <div className="text-[10px] text-zinc-500">到期 {new Date(market.endDate).toLocaleString()}</div>
+        <div className="text-[10px] text-zinc-500">{t("market.expiry")} {new Date(market.endDate).toLocaleString()}</div>
       </CardContent>
     </Card>
   );

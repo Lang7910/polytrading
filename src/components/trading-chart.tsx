@@ -20,9 +20,11 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { calcDfmaIndicator } from "@/lib/dfma-indicator";
+import { useI18n } from "@/components/i18n-provider";
 import { calcBollingerBands, calcMACD, calcMovingAverage, calcRSI } from "@/lib/indicators";
 import { buildMarketSessionMarkers, type MarketSessionVisibility } from "@/lib/market-sessions";
 import type { ChartIndicators, DirectionalPrediction, KlinePoint, PriceTargetPrediction } from "@/lib/types";
+import type { TranslationFn } from "@/lib/i18n";
 import { toPercent } from "@/lib/utils";
 
 export interface PredictionLayerVisibility {
@@ -73,10 +75,14 @@ function writeStoredLogicalRange(chartStateKey: string, range: LogicalRange) {
   }
 }
 
-function formatDirectionalMarker(label: string, value: number, directional: DirectionalPrediction) {
-  const buyPrice = label === "涨" ? directional.buyYes : directional.buyNo;
+function formatDirectionalMarker(
+  label: string,
+  value: number,
+  buyPrice: number | undefined,
+  buyLabel: string,
+) {
   const probability = `${Math.round(value * 100)}%`;
-  return buyPrice === undefined ? `${label} ${probability}` : `${label} ${probability} 买${Math.round(buyPrice * 100)}¢`;
+  return buyPrice === undefined ? `${label} ${probability}` : `${label} ${probability} ${buyLabel}${Math.round(buyPrice * 100)}¢`;
 }
 
 function formatTargetPrice(price: number) {
@@ -94,7 +100,7 @@ function targetOpacity(probability: number) {
   return Math.max(0.28, Math.min(0.9, probability));
 }
 
-function toChartTargetLines(target: PriceTargetPrediction): ChartTargetLine[] {
+function toChartTargetLines(target: PriceTargetPrediction, t: TranslationFn): ChartTargetLine[] {
   const probability = toPercent(target.yesProbability);
   const alpha = targetOpacity(target.yesProbability);
 
@@ -105,7 +111,7 @@ function toChartTargetLines(target: PriceTargetPrediction): ChartTargetLine[] {
         key: `${target.id}-low`,
         price: target.rangeLow,
         color: `rgba(59,130,246,${alpha})`,
-        title: `${target.timeLabel} 区间下沿 ${label} ${probability}`,
+        title: `${target.timeLabel} ${t("chart.rangeLow")} ${label} ${probability}`,
         lineStyle: LineStyle.Dashed,
         lineWidth: 1,
       },
@@ -113,7 +119,7 @@ function toChartTargetLines(target: PriceTargetPrediction): ChartTargetLine[] {
         key: `${target.id}-high`,
         price: target.rangeHigh,
         color: `rgba(59,130,246,${alpha})`,
-        title: `${target.timeLabel} 区间上沿 ${label} ${probability}`,
+        title: `${target.timeLabel} ${t("chart.rangeHigh")} ${label} ${probability}`,
         lineStyle: LineStyle.Dashed,
         lineWidth: 1,
       },
@@ -127,7 +133,7 @@ function toChartTargetLines(target: PriceTargetPrediction): ChartTargetLine[] {
         key: target.id,
         price: target.price,
         color: isAbove ? `rgba(16,185,129,${alpha})` : `rgba(239,68,68,${alpha})`,
-        title: `${target.timeLabel} ${isAbove ? "高于" : "低于"} ${formatTargetPrice(target.price)} ${probability}`,
+        title: `${target.timeLabel} ${isAbove ? t("chart.upper") : t("chart.lower")} ${formatTargetPrice(target.price)} ${probability}`,
         lineStyle: LineStyle.Dashed,
         lineWidth: 2,
       },
@@ -141,7 +147,7 @@ function toChartTargetLines(target: PriceTargetPrediction): ChartTargetLine[] {
         key: target.id,
         price: target.price,
         color: isBelow ? `rgba(244,114,182,${alpha})` : `rgba(245,158,11,${alpha})`,
-        title: `${target.timeLabel} ${isBelow ? "触及下方" : "触及上方"} ${formatTargetPrice(target.price)} ${probability}`,
+        title: `${target.timeLabel} ${isBelow ? t("chart.hitBelow") : t("chart.hitAbove")} ${formatTargetPrice(target.price)} ${probability}`,
         lineStyle: LineStyle.Dotted,
         lineWidth: 2,
       },
@@ -153,7 +159,7 @@ function toChartTargetLines(target: PriceTargetPrediction): ChartTargetLine[] {
       key: target.id,
       price: target.price,
       color: `rgba(34,197,94,${alpha})`,
-      title: `${target.timeLabel} 目标价 ${formatTargetPrice(target.price)} ${probability}`,
+      title: `${target.timeLabel} ${t("chart.target")} ${formatTargetPrice(target.price)} ${probability}`,
       lineStyle: LineStyle.Dashed,
       lineWidth: 2,
     },
@@ -169,6 +175,7 @@ export function TradingChart({
   sessions,
   chartStateKey,
 }: TradingChartProps) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick", Time> | null>(null);
@@ -569,7 +576,7 @@ export function TradingChart({
       if (target.priceTargetType === "range" && !visibility.range) continue;
       if (target.priceTargetType === "hit" && !visibility.hit) continue;
       if ((target.priceTargetType === "generic" || !target.priceTargetType) && !visibility.hit) continue;
-      for (const lineDef of toChartTargetLines(target)) {
+      for (const lineDef of toChartTargetLines(target, t)) {
         const line = seriesRef.current.createPriceLine({
           price: lineDef.price,
           color: lineDef.color,
@@ -581,7 +588,7 @@ export function TradingChart({
         priceLinesRef.current.push(line);
       }
     }
-  }, [targets, visibility.aboveBelow, visibility.hit, visibility.range]);
+  }, [t, targets, visibility.aboveBelow, visibility.hit, visibility.range]);
 
   useEffect(() => {
     if (!seriesRef.current) return;
@@ -637,14 +644,14 @@ export function TradingChart({
           position: "aboveBar",
           color: directional.status === "resolving" ? "#71717a" : "#3b82f6",
           shape: "arrowUp",
-          text: formatDirectionalMarker("涨", directional.yes, directional),
+          text: formatDirectionalMarker(t("chart.up"), directional.yes, directional.buyYes, t("chart.buy")),
         },
         {
           time: latest.time,
           position: "belowBar",
           color: directional.status === "resolving" ? "#52525b" : "#ef4444",
           shape: "arrowDown",
-          text: formatDirectionalMarker("跌", directional.no, directional),
+          text: formatDirectionalMarker(t("chart.down"), directional.no, directional.buyNo, t("chart.buy")),
         },
       );
     }
@@ -654,7 +661,7 @@ export function TradingChart({
       return;
     }
     markerApiRef.current.setMarkers(markers);
-  }, [candleData, dfmaData.signals, directional, indicators.dfma.enabled, sessionMarkers, visibility.directional]);
+  }, [candleData, dfmaData.signals, directional, indicators.dfma.enabled, sessionMarkers, t, visibility.directional]);
 
   const hasAboveBelowTargets = visibility.aboveBelow && targets.some((target) => target.priceTargetType === "above-below");
   const hasRangeTargets = visibility.range && targets.some((target) => target.priceTargetType === "range");
@@ -680,25 +687,25 @@ export function TradingChart({
           {hasAboveBelowTargets && (
             <span className="flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              高于/低于
+              {t("chart.aboveBelow")}
             </span>
           )}
           {hasRangeTargets && (
             <span className="flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-blue-400" />
-              价格区间
+              {t("chart.range")}
             </span>
           )}
           {hasHitTargets && (
             <span className="flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-amber-400" />
-              触及价格
+              {t("chart.hit")}
             </span>
           )}
           {hasGenericTargets && (
             <span className="flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-amber-300" />
-              触及/目标
+              {t("chart.targetOrHit")}
             </span>
           )}
         </div>
